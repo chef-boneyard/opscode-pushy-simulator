@@ -14,6 +14,7 @@
          get_env/4,
          read_body/0,
          do_authenticate_message/2,
+         do_authenticate_message/3,
          signed_header_from_message/2,
          rand_bytes/1,
          guid_v4/0,
@@ -83,11 +84,13 @@ read_body() ->
     end.
 
 %% DECODE/DECRYPT
-
 do_authenticate_message(Header, Body) ->
+    do_authenticate_message(Header, Body, client_public).
+
+do_authenticate_message(Header, Body, KeyName) ->
     SignedChecksum = signed_checksum_from_header(Header),
     % TODO - query DB for public key of each client
-    {ok, PublicKey} = chef_keyring:get_key(client_public),
+    {ok, PublicKey} = chef_keyring:get_key(KeyName),
     Decrypted = decrypt_sig(SignedChecksum, PublicKey),
     Plain = chef_authn:hash_string(Body),
     case Decrypted of
