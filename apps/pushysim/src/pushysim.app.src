@@ -1,0 +1,19 @@
+%% -*- mode: erlang -*-
+%% -*- tab-width: 4;erlang-indent-level: 4;indent-tabs-mode: nil -*-
+%% ex: ts=4 sw=4 ft=erlang et
+{application, pushysim,
+ [
+  {description, "Chef Push Job Simulated Clients"},
+  {vsn, "0.0.1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  erlzmq,
+                  jiffy,
+                  lager
+                 ]},
+  %%{included_applications, [chef_authn]},
+  {mod, { pushysim_app, []}},
+  {env, []}
+ ]}.
