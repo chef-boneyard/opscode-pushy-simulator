@@ -12,10 +12,7 @@
           client_name :: binary(),
 
           server_name :: binary(),
-          server_port :: integer(),
+          server_port :: integer()
 
-          %% per-client specialization
-          node_id :: binary(),
-          instance_id :: integer()
          }).
 

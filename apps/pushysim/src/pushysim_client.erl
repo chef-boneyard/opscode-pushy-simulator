@@ -44,7 +44,7 @@
          client_name :: binary(),
          heartbeat_interval :: integer(),
          sequence :: integer(),
-         server_public_key :: binary(),
+         server_public_key,
          private_key :: any(),
          incarnation_id :: binary(),
          node_id :: binary()}).
@@ -67,18 +67,17 @@ heartbeat() ->
 init([#client_state{ctx = Ctx,
                     client_name = ClientName,
                     server_name = Hostname,
-                    server_port = Port,
-                    node_id = NodeId,
-                    instance_id = InstanceId}]) ->
+                    server_port = Port}]) ->
     IncarnationId = list_to_binary(pushy_util:guid_v4()),
+    InstanceId = list_to_binary(pushy_util:guid_v4()),
 
     lager:info("Getting config from Pushy Server ~s:~w", [Hostname, Port]),
     Config = pushy_client_config:get_config(?PUSHY_ORGNAME, Hostname, Port),
 
     CommandAddress = proplists:get_value(command_address, Config),
 
-    NodeInstance = list_to_binary(io_lib:format("~s~4..0B", [NodeId, InstanceId])),
-    lager:info("Starting pushy client with node id ~s (~s).", [NodeInstance, IncarnationId]),
+    NodeId = list_to_binary(io_lib:format("~s-~s", [ClientName, InstanceId])),
+    lager:info("Starting pushy client with node id ~s (~s).", [NodeId, IncarnationId]),
     Interval =  pushy_util:get_env(pushysim, heartbeat_interval, fun is_integer/1),
 
     lager:info("Client : Connecting to command channel at ~s.", [CommandAddress]),
@@ -95,10 +94,10 @@ init([#client_state{ctx = Ctx,
                    sequence = 0,
                    server_public_key = PublicKey,
                    private_key = PrivateKey,
-                   node_id = NodeInstance,
+                   node_id = NodeId,
                    incarnation_id = IncarnationId
                   },
-    timer:apply_interval(Interval, ?MODULE, heartbeat, []),
+    {ok, _Timer} = timer:apply_interval(Interval, ?MODULE, heartbeat, []),
     {ok, State}.
 
 handle_call(_Request, _From, State) ->

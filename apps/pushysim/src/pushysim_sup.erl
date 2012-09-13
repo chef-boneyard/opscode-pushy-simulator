@@ -1,6 +1,7 @@
 %% -*- erlang-indent-level: 4;indent-tabs-mode: nil; fill-column: 92 -*-
 %% ex: ts=4 sw=4 et
-%% @copyright 2011-2012 Opscode Inc.
+%% @author James Casey <james@opscode.com>
+%% @copyright 2012 Opscode Inc.
 
 -module(pushysim_sup).
 
@@ -39,9 +40,7 @@ init([#client_state{} = ClientState0]) ->
 
     ClientState = ClientState0#client_state{server_name = Hostname,
                                             server_port = Port,
-                                            client_name = client_name(),
-                                            node_id = <<"pushysim">>,
-                                            instance_id = 0},
+                                            client_name = client_name()},
     {ok, {{one_for_one, 0, 1},
                [?WORKER(chef_keyring, []),
                 ?WORKER(pushysim_client, [ClientState])
