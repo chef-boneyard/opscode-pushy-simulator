@@ -212,7 +212,8 @@ process_message(State, _Header, Body) ->
 respond(<<"commit">>, JobId, State) ->
     send_response(<<"ack_commit">>, JobId, State);
 respond(<<"run">>, JobId, State) ->
-    send_response(<<"ack_run">>, JobId, State),
+    send_response(<<"ack_run">>, JobId, #state{node_id = NodeId} = State),
+    lager:info("[~s] Wheee ! Running a job...", [NodeId]),
     send_response(<<"complete">>, JobId, State);
 respond(<<"abort">>, JobId, State) ->
     send_response(<<"aborted">>, JobId, State).
