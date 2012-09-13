@@ -41,8 +41,10 @@
 %% TODO: tighten typedefs up
 -record(state,
         {command_sock :: any(),
+         client_name :: binary(),
          heartbeat_interval :: integer(),
          sequence :: integer(),
+         server_public_key :: binary(),
          private_key :: any(),
          incarnation_id :: binary(),
          node_id :: binary()}).
@@ -63,26 +65,35 @@ heartbeat() ->
 
 -spec init([#client_state{}]) -> {ok, #state{} }.
 init([#client_state{ctx = Ctx,
+                    client_name = ClientName,
+                    server_name = Hostname,
+                    server_port = Port,
                     node_id = NodeId,
                     instance_id = InstanceId}]) ->
     IncarnationId = list_to_binary(pushy_util:guid_v4()),
+
+    lager:info("Getting config from Pushy Server ~s:~w", [Hostname, Port]),
+    Config = pushy_client_config:get_config(?PUSHY_ORGNAME, Hostname, Port),
+
+    CommandAddress = proplists:get_value(command_address, Config),
 
     NodeInstance = list_to_binary(io_lib:format("~s~4..0B", [NodeId, InstanceId])),
     lager:info("Starting pushy client with node id ~s (~s).", [NodeInstance, IncarnationId]),
     Interval =  pushy_util:get_env(pushysim, heartbeat_interval, fun is_integer/1),
 
+    lager:info("Client : Connecting to command channel at ~s.", [CommandAddress]),
     {ok, Sock} = erlzmq:socket(Ctx, [dealer, {active, true}]),
     erlzmq:setsockopt(Sock, linger, 0),
-
-
-    CommandAddress = command_address(),
-    lager:info("Client : Connecting to command channel at ~s.", [CommandAddress]),
     erlzmq:connect(Sock, CommandAddress),
+
     {ok, PrivateKey} = chef_keyring:get_key(client_private),
+    {ok, PublicKey} = server_public_key(Config),
 
     State = #state{command_sock = Sock,
+                   client_name = ClientName,
                    heartbeat_interval = Interval,
                    sequence = 0,
+                   server_public_key = PublicKey,
                    private_key = PrivateKey,
                    node_id = NodeInstance,
                    incarnation_id = IncarnationId
@@ -115,16 +126,26 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
+server_public_key(Config) ->
+    RawKey = proplists:get_value(public_key, Config),
+    case chef_authn:extract_public_or_private_key(RawKey) of
+        {error, bad_key} ->
+            lager:error("Can't decode Public Key ~s~n", [RawKey]),
+            {error, bad_key};
+         Key when is_tuple(Key) ->
+            {ok, Key}
+    end.
+
 -spec send_heartbeat(#state{}) -> #state{}.
 send_heartbeat(#state{command_sock = Sock,
+                      client_name = ClientName,
                       sequence = Sequence,
                       private_key = PrivateKey,
                       incarnation_id = IncarnationId,
                       node_id = NodeId} = State) ->
 
-    {ok, Hostname} = inet:gethostname(),
     Msg = {[{node, NodeId},
-            {client, list_to_binary(Hostname)},
+            {client, ClientName},
             {org, "pushy"},
             {type, heartbeat},
             {timestamp, list_to_binary(httpd_util:rfc1123_date())},
@@ -143,12 +164,12 @@ send_heartbeat(#state{command_sock = Sock,
     State#state{sequence=Sequence + 1}.
 
 send_response(Type, JobId, #state{command_sock = Sock,
+                                  client_name = ClientName,
                                   private_key = PrivateKey,
                                   incarnation_id = IncarnationId,
                                   node_id = NodeId}) ->
-    {ok, Hostname} = inet:gethostname(),
     Msg = {[{node, NodeId},
-            {client, list_to_binary(Hostname)},
+            {client, ClientName},
             {org, "pushy"},
             {type, Type},
             {timestamp, list_to_binary(httpd_util:rfc1123_date())},
@@ -164,11 +185,11 @@ send_response(Type, JobId, #state{command_sock = Sock,
     lager:debug("Response sent: header=~s,body=~s",[HeaderFrame, BodyFrame]).
 
 
-do_receive(Sock, Frame, State) ->
+do_receive(Sock, Frame, #state{server_public_key = PublicKey} = State) ->
     [Header, Body] = pushy_messaging:receive_message_async(Sock, Frame),
 
     lager:debug("Received message~n\tA ~p~n\tH ~s~n\tB ~s", [Header, Body]),
-    case catch pushy_util:do_authenticate_message(Header, Body, pushy_pub) of
+    case catch pushy_util:do_authenticate_message(Header, Body, PublicKey) of
         ok ->
             process_message(State, Header, Body);
         {no_authn, bad_sig} ->
@@ -195,11 +216,4 @@ respond(<<"run">>, JobId, State) ->
     send_response(<<"complete">>, JobId, State);
 respond(<<"abort">>, JobId, State) ->
     send_response(<<"aborted">>, JobId, State).
-
--spec command_address() -> list().
-command_address() ->
-    %% TODO - replace with pushy_utl code to construct address
-    Host = pushy_util:get_env(pushysim, server_name, fun is_list/1),
-    Port = pushy_util:get_env(pushysim, server_command_port, fun is_integer/1),
-    lists:flatten(io_lib:format("tcp://~s:~w",[Host,Port])).
 

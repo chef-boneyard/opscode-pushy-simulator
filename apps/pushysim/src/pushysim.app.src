@@ -11,6 +11,7 @@
                   stdlib,
                   erlzmq,
                   jiffy,
+                  ibrowse,
                   lager
                  ]},
   %%{included_applications, [chef_authn]},

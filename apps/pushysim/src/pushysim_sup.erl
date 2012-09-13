@@ -34,9 +34,25 @@ start_link(Ctx) ->
 %% ===================================================================
 
 init([#client_state{} = ClientState0]) ->
-    ClientState = ClientState0#client_state{node_id = <<"pushysim">>, instance_id = 0},
+    Hostname = list_to_binary(pushy_util:get_env(pushysim, server_name, fun is_list/1)),
+    Port = pushy_util:get_env(pushysim, server_api_port, fun is_integer/1),
+
+    ClientState = ClientState0#client_state{server_name = Hostname,
+                                            server_port = Port,
+                                            client_name = client_name(),
+                                            node_id = <<"pushysim">>,
+                                            instance_id = 0},
     {ok, {{one_for_one, 0, 1},
                [?WORKER(chef_keyring, []),
                 ?WORKER(pushysim_client, [ClientState])
                ]}}.
+
+%% ------------------------------------------------------------------
+%% Internal Function Definitions
+%% ------------------------------------------------------------------
+
+-spec client_name() -> binary().
+client_name() ->
+    {ok, Hostname} = inet:gethostname(),
+    list_to_binary(Hostname).
 
