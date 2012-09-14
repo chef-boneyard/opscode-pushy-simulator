@@ -24,6 +24,21 @@ The public API is exposed through the `pushysim` module.
 + `pushysim:start_clients(N)` - Start up N clients (numbered 1..N) that
   connect to the pushy server and start heartbeating
 
+Sending Jobs
+------------
+Currently there is no code in pushysim to allow you to start jobs via
+the REST API.  In `opscode-pushy-server` branch `jc/OC-3256/pushysim`
+there is a helper function `pushy_tools:send_job(Hostname, N)` which can
+start up the job submission cycle to pushysim clients on a given host.
+
+On dev-vm the hostname is `<<"private-chef">>` by default so execute
+inside the `pushy-server` VM:
+
+    > pushy_tools:send_job(<<"private-chef">>, 100).
+
+to send a job to the clients named `"private-chef-0001"` to
+`"private-chef-0100"`.
+
 TODO
 ----
 + Handle server heartbeats
