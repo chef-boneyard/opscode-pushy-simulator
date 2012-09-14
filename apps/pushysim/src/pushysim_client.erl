@@ -10,8 +10,8 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/1,
-         heartbeat/0
+-export([start_link/2,
+         heartbeat/1
         ]).
 
 %% ------------------------------------------------------------------
@@ -53,11 +53,11 @@
 %% API Function Definitions
 %% ------------------------------------------------------------------
 
-start_link(ClientState) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [ClientState], []).
+start_link(ClientState, InstanceId) ->
+    gen_server:start_link(?MODULE, [ClientState, InstanceId], []).
 
-heartbeat() ->
-    gen_server:cast(?SERVER, heartbeat).
+heartbeat(Pid) ->
+    gen_server:cast(Pid, heartbeat).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Definitions
@@ -67,16 +67,15 @@ heartbeat() ->
 init([#client_state{ctx = Ctx,
                     client_name = ClientName,
                     server_name = Hostname,
-                    server_port = Port}]) ->
+                    server_port = Port}, InstanceId]) ->
     IncarnationId = list_to_binary(pushy_util:guid_v4()),
-    InstanceId = list_to_binary(pushy_util:guid_v4()),
 
     lager:info("Getting config from Pushy Server ~s:~w", [Hostname, Port]),
     Config = pushy_client_config:get_config(?PUSHY_ORGNAME, Hostname, Port),
 
     CommandAddress = proplists:get_value(command_address, Config),
 
-    NodeId = list_to_binary(io_lib:format("~s-~s", [ClientName, InstanceId])),
+    NodeId = list_to_binary(io_lib:format("~s-~4..0B", [ClientName, InstanceId])),
     lager:info("Starting pushy client with node id ~s (~s).", [NodeId, IncarnationId]),
     Interval =  pushy_util:get_env(pushysim, heartbeat_interval, fun is_integer/1),
 
@@ -97,7 +96,7 @@ init([#client_state{ctx = Ctx,
                    node_id = NodeId,
                    incarnation_id = IncarnationId
                   },
-    {ok, _Timer} = timer:apply_interval(Interval, ?MODULE, heartbeat, []),
+    {ok, _Timer} = timer:apply_interval(Interval, ?MODULE, heartbeat, [self()]),
     {ok, State}.
 
 handle_call(_Request, _From, State) ->

@@ -43,7 +43,7 @@ init([#client_state{} = ClientState0]) ->
                                             client_name = client_name()},
     {ok, {{one_for_one, 0, 1},
                [?WORKER(chef_keyring, []),
-                ?WORKER(pushysim_client, [ClientState])
+                ?SUP(pushysim_client_sup, [ClientState])
                ]}}.
 
 %% ------------------------------------------------------------------
