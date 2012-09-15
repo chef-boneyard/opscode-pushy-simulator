@@ -41,6 +41,7 @@
 %% TODO: tighten typedefs up
 -record(state,
         {command_sock :: any(),
+         heartbeat_sock :: any(),
          client_name :: binary(),
          heartbeat_interval :: integer(),
          sequence :: integer(),
@@ -72,22 +73,22 @@ init([#client_state{ctx = Ctx,
 
     lager:info("Getting config from Pushy Server ~s:~w", [Hostname, Port]),
     Config = pushy_client_config:get_config(?PUSHY_ORGNAME, Hostname, Port),
-
-    CommandAddress = proplists:get_value(command_address, Config),
+    Interval =  pushy_util:get_env(pushysim, heartbeat_interval, fun is_integer/1),
 
     NodeId = list_to_binary(io_lib:format("~s-~4..0B", [ClientName, InstanceId])),
     lager:info("Starting pushy client with node id ~s (~s).", [NodeId, IncarnationId]),
-    Interval =  pushy_util:get_env(pushysim, heartbeat_interval, fun is_integer/1),
 
-    lager:info("Client : Connecting to command channel at ~s.", [CommandAddress]),
-    {ok, Sock} = erlzmq:socket(Ctx, [dealer, {active, true}]),
-    erlzmq:setsockopt(Sock, linger, 0),
-    erlzmq:connect(Sock, CommandAddress),
+
+    HeartbeatAddress = proplists:get_value(heartbeat_address, Config),
+    {ok, HeartbeatSock} = connect_to_heartbeat(Ctx, HeartbeatAddress),
+    CommandAddress = proplists:get_value(command_address, Config),
+    {ok, CommandSock} = connect_to_command(Ctx, CommandAddress),
 
     {ok, PrivateKey} = chef_keyring:get_key(client_private),
     {ok, PublicKey} = server_public_key(Config),
 
-    State = #state{command_sock = Sock,
+    State = #state{command_sock = CommandSock,
+                   heartbeat_sock = HeartbeatSock,
                    client_name = ClientName,
                    heartbeat_interval = Interval,
                    sequence = 0,
@@ -183,19 +184,26 @@ send_response(Type, JobId, #state{command_sock = Sock,
     lager:debug("Response sent: header=~s,body=~s",[HeaderFrame, BodyFrame]).
 
 
-do_receive(Sock, Frame, #state{server_public_key = PublicKey} = State) ->
+do_receive(Sock, Frame, #state{command_sock = CommandSock,
+                               heartbeat_sock = HeartbeatSock,
+                               server_public_key = PublicKey} = State) ->
     [Header, Body] = pushy_messaging:receive_message_async(Sock, Frame),
 
     lager:debug("Received message~n\tA ~p~n\tH ~s~n\tB ~s", [Header, Body]),
     case catch pushy_util:do_authenticate_message(Header, Body, PublicKey) of
         ok ->
-            process_message(State, Header, Body);
+            case Sock of
+                CommandSock ->
+                    process_server_command(State, Header, Body);
+                HeartbeatSock ->
+                    process_server_heartbeat(State, Header, Body)
+            end;
         {no_authn, bad_sig} ->
             lager:error("Command message failed verification: header=~s", [Header]),
             State
     end.
 
-process_message(State, _Header, Body) ->
+process_server_command(State, _Header, Body) ->
     case catch jiffy:decode(Body) of
         {Data} ->
             Type = ej:get({<<"type">>}, Data),
@@ -207,6 +215,17 @@ process_message(State, _Header, Body) ->
             State
     end.
 
+process_server_heartbeat(State, _Header, Body) ->
+    case catch jiffy:decode(Body) of
+        {Data} ->
+            %% TODO - we should do something with these heartbeats...
+            ej:get({<<"server">>}, Data),
+            State;
+        {'EXIT', Error} ->
+            lager:error("Server heartbeat JSON parsing failed: body=~s, error=~s", [Body, Error]),
+            State
+    end.
+
 respond(<<"commit">>, JobId, State) ->
     send_response(<<"ack_commit">>, JobId, State);
 respond(<<"run">>, JobId, State) ->
@@ -215,4 +234,19 @@ respond(<<"run">>, JobId, State) ->
     send_response(<<"complete">>, JobId, State);
 respond(<<"abort">>, JobId, State) ->
     send_response(<<"aborted">>, JobId, State).
+
+
+connect_to_command(Ctx, Address) ->
+    lager:info("Client : Connecting to command channel at ~s.", [Address]),
+    {ok, Sock} = erlzmq:socket(Ctx, [dealer, {active, true}]),
+    erlzmq:setsockopt(Sock, linger, 0),
+    erlzmq:connect(Sock, Address),
+    {ok, Sock}.
+
+connect_to_heartbeat(Ctx, Address) ->
+    lager:info("Client : Connecting to server heartbeat channel at ~s.", [Address]),
+    {ok, Sock} = erlzmq:socket(Ctx, [sub, {active, true}]),
+    erlzmq:connect(Sock, Address),
+    erlzmq:setsockopt(Sock, subscribe, ""),
+    {ok, Sock}.
 
