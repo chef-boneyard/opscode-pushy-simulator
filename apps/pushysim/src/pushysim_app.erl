@@ -21,7 +21,7 @@
 
 start(_StartType, _StartArgs) ->
     error_logger:info_msg("Pushy Client Simulator starting.~n"),
-    IoProcesses = pushy_util:get_env(pushysim, zmq_io_processes, fun is_integer/1),
+    IoProcesses = pushy_util:get_env(pushysim, zmq_io_processes, 1, fun is_integer/1),
     case erlzmq:context(IoProcesses) of
         {ok, Ctx} ->
             case pushysim_sup:start_link(#client_state{ctx=Ctx}) of
