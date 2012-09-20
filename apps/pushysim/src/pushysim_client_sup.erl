@@ -31,6 +31,10 @@ start_link(Ctx) ->
 %% ===================================================================
 
 init([Ctx]) ->
+    %% Seed the RNG which we'll use in the client init/1
+    <<A1:32, A2:32, A3:32>> = crypto:rand_bytes(12),
+    random:seed(A1, A2, A3),
+
     {ok, {{simple_one_for_one, 0, 1},
           [{pushysim_client, {pushysim_client, start_link, [Ctx]},
             temporary, brutal_kill, worker, [pushysim_client]}

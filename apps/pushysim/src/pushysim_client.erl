@@ -104,8 +104,8 @@ init([#client_state{ctx = Ctx,
                    node_id = NodeId,
                    incarnation_id = IncarnationId
                   },
-    lager:info("Starting heartbeat for ~s (interval ~ws)", [NodeId, Interval]),
-    {ok, _Timer} = timer:apply_interval(Interval, ?MODULE, heartbeat, [self()]),
+    start_spread_heartbeat(Interval),
+
     {ok, State}.
 
 handle_call(_Request, _From, State) ->
@@ -117,6 +117,11 @@ handle_cast(heartbeat, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+handle_info(start_heartbeat, #state{heartbeat_interval = Interval,
+                                    node_id = NodeId} = State) ->
+    lager:info("Starting heartbeat for ~s (interval ~ws)", [NodeId, Interval]),
+    timer:apply_interval(Interval, ?MODULE, heartbeat, [self()]),
+    {noreply, State};
 handle_info({zmq, Sock, Frame, [rcvmore]}, State) ->
     {noreply, receive_message(Sock, Frame, State)};
 handle_info(_Info, State) ->
@@ -140,7 +145,7 @@ send_heartbeat(#state{command_sock = Sock,
                       private_key = PrivateKey,
                       incarnation_id = IncarnationId,
                       node_id = NodeId} = State) ->
-    lager:debug("Sending heartbeat ~d for ~s", [Sequence, NodeId]),
+    lager:debug("Sending heartbeat ~w for ~s", [Sequence, NodeId]),
 
     Msg = {[{node, NodeId},
             {client, ClientName},
@@ -264,3 +269,13 @@ connect_to_heartbeat(Ctx, Address) ->
     erlzmq:setsockopt(Sock, subscribe, ""),
     {ok, Sock}.
 
+%
+% Start a function after a random amount of time spread across a given time interval
+% in ms
+%
+start_spread_heartbeat(Interval) ->
+    <<A1:32, A2:32, A3:32>> = crypto:rand_bytes(12),
+    random:seed(A1, A2, A3),
+    Delay = random:uniform(Interval),
+    lager:info("Will send message after ~wms", [Delay]),
+    {ok, _Timer} = timer:send_after(Delay, start_heartbeat).
