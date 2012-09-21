@@ -30,9 +30,8 @@ start_clients(Num) when is_integer(Num) ->
 %%
 stop_clients() ->
     lager:info("Stopping ~w clients", [count_clients()]),
-    supervisor:terminate_child(pushysim_sup, pushysim_client_sup),
-    lager:info("Restarting client supervisor"),
-    supervisor:restart_child(pushysim_sup, pushysim_client_sup).
+    [gen_server:call(Pid, stop) || {_, Pid, _, _} <- supervisor:which_children(pushysim_client_sup)],
+    supervisor:terminate_child(pushysim_sup, pushysim_client_sup).
 
 %%
 %% INTERNAL FUNCTIONS
