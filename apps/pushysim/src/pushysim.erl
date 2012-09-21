@@ -9,7 +9,8 @@
 %% API
 -export([start_client/1,
          start_clients/1,
-         stop_clients/0
+         stop_clients/0,
+         count_clients/0
         ]).
 
 %% ===================================================================
@@ -26,17 +27,20 @@ start_clients(Num) when is_integer(Num) ->
     Clients = [ start_client(N) || N <- lists:seq(1, Num)],
     {ok, length(Clients)}.
 
-%% @doc Cleanly stop all running clients, shutting down zeromq sockets
+%% @doc Cleanly stop all running clients, shutting down zeromq sockets.
+%% We let the pushy_client_sup do the work for us.
 %%
 stop_clients() ->
     lager:info("Stopping ~w clients", [count_clients()]),
-    [gen_server:call(Pid, stop) || {_, Pid, _, _} <- supervisor:which_children(pushysim_client_sup)],
-    supervisor:terminate_child(pushysim_sup, pushysim_client_sup).
+    supervisor:terminate_child(pushysim_sup, pushysim_client_sup),
+    supervisor:restart_child(pushysim_sup, pushysim_client_sup).
+
+count_clients() ->
+    ClientDesc = supervisor:count_children(pushysim_client_sup),
+    proplists:get_value(workers, ClientDesc).
+
 
 %%
 %% INTERNAL FUNCTIONS
 %%
-count_clients() ->
-    ClientDesc = supervisor:count_children(pushysim_client_sup),
-    proplists:get_value(workers, ClientDesc).
 

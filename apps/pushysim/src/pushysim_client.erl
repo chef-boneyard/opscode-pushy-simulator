@@ -57,7 +57,7 @@
          incarnation_id :: binary(),
          node_id :: binary()}).
 
--define(ZMQ_CLOSE_TIMEOUT, 200).
+-define(ZMQ_CLOSE_TIMEOUT, 10).
 
 %% ------------------------------------------------------------------
 %% API Function Definitions
@@ -78,6 +78,8 @@ init([#client_state{ctx = Ctx,
                     client_name = ClientName,
                     server_name = Hostname,
                     server_port = Port}, InstanceId]) ->
+    process_flag(trap_exit, true),
+
     IncarnationId = list_to_binary(pushy_util:guid_v4()),
 
     lager:debug("Getting config from Pushy Server ~s:~w", [Hostname, Port]),
@@ -109,13 +111,6 @@ init([#client_state{ctx = Ctx,
     start_spread_heartbeat(Interval),
     {ok, State}.
 
-handle_call(stop, _From, #state{command_sock = CommandSock,
-                                heartbeat_sock = HeartbeatSock,
-                                node_id = NodeId} = State) ->
-    lager:info("Stoppping: [~s]", [NodeId]),
-    erlzmq:close(CommandSock, ?ZMQ_CLOSE_TIMEOUT),
-    erlzmq:close(HeartbeatSock, ?ZMQ_CLOSE_TIMEOUT),
-    {stop, normal, stopped, State};
 handle_call(Request, _From, #state{node_id = NodeId} = State) ->
     lager:warning("handle_call: [~s] unhandled message ~w:", [NodeId, Request]),
     {noreply, ok, State}.
@@ -138,7 +133,12 @@ handle_info(Info, #state{node_id = NodeId} = State) ->
     lager:warning("handle_info: [~s] unhandled message ~w:", [NodeId, Info]),
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, #state{command_sock = CommandSock,
+                          heartbeat_sock = HeartbeatSock,
+                          node_id = NodeId}) ->
+    lager:info("Stoppping: [~s]", [NodeId]),
+    erlzmq:close(CommandSock, ?ZMQ_CLOSE_TIMEOUT),
+    erlzmq:close(HeartbeatSock, ?ZMQ_CLOSE_TIMEOUT),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
