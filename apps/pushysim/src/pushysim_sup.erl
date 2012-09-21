@@ -41,7 +41,7 @@ init([#client_state{} = ClientState0]) ->
     ClientState = ClientState0#client_state{server_name = Hostname,
                                             server_port = Port,
                                             client_name = client_name()},
-    {ok, {{one_for_one, 0, 1},
+    {ok, {{one_for_one, 10, 3600},
                [?WORKER(chef_keyring, []),
                 ?SUP(pushysim_client_sup, [ClientState])
                ]}}.

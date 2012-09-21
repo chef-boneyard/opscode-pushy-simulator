@@ -8,7 +8,8 @@
 
 %% API
 -export([start_client/1,
-         start_clients/1
+         start_clients/1,
+         stop_clients/0
         ]).
 
 %% ===================================================================
@@ -22,6 +23,21 @@ start_client(InstanceId) when is_integer(InstanceId) ->
 
 %% @doc Start a set of clients.  They are create in series.
 start_clients(Num) when is_integer(Num) ->
-    [ start_client(N) || N <- lists:seq(1, Num)].
+    Clients = [ start_client(N) || N <- lists:seq(1, Num)],
+    {ok, length(Clients)}.
 
+%% @doc Cleanly stop all running clients, shutting down zeromq sockets
+%%
+stop_clients() ->
+    lager:info("Stopping ~w clients", [count_clients()]),
+    supervisor:terminate_child(pushysim_sup, pushysim_client_sup),
+    lager:info("Restarting client supervisor"),
+    supervisor:restart_child(pushysim_sup, pushysim_client_sup).
+
+%%
+%% INTERNAL FUNCTIONS
+%%
+count_clients() ->
+    ClientDesc = supervisor:count_children(pushysim_client_sup),
+    proplists:get_value(workers, ClientDesc).
 

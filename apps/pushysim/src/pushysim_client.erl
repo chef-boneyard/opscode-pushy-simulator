@@ -108,6 +108,11 @@ init([#client_state{ctx = Ctx,
 
     {ok, State}.
 
+handle_call(stop, _From, #state{command_sock = CommandSock,
+                               heartbeat_sock = HeartbeatSock} = State) ->
+    erlzmq:close(CommandSock),
+    erlzmq:close(HeartbeatSock),
+    {stop, normal, ok, State};
 handle_call(_Request, _From, State) ->
     {noreply, ok, State}.
 
