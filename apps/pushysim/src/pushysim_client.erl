@@ -113,7 +113,7 @@ init([#client_state{ctx = Ctx,
 
 handle_call(Request, _From, #state{node_id = NodeId} = State) ->
     lager:warning("handle_call: [~s] unhandled message ~w:", [NodeId, Request]),
-    {noreply, ok, State}.
+    {noreply, State}.
 
 handle_cast(heartbeat, State) ->
     State1 = send_heartbeat(State),
