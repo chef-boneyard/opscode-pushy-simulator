@@ -9,12 +9,12 @@
   {applications, [
                   kernel,
                   stdlib,
+                  folsom_graphite,
                   erlzmq,
                   jiffy,
                   ibrowse,
                   lager
                  ]},
-  %%{included_applications, [chef_authn]},
   {mod, { pushysim_app, []}},
   {env, []}
  ]}.
