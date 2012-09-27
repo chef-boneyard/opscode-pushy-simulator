@@ -37,7 +37,7 @@ init([Ctx]) ->
 
     {ok, {{simple_one_for_one, 0, 1},
           [{pushysim_client, {pushysim_client, start_link, [Ctx]},
-            temporary, brutal_kill, worker, [pushysim_client]}
+            temporary, 10000, worker, [pushysim_client]}
           ]}}.
 
 %% ------------------------------------------------------------------
