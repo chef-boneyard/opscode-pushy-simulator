@@ -60,9 +60,8 @@ rel/pushysim:
 
 devrel: rel
 	@/bin/echo -n Symlinking deps and apps into release
-	@$(foreach dep,$(wildcard deps/*), /bin/echo -n .;rm -rf rel/pushysim/lib/$(shell basename $(dep))-* \
-	   && ln -sf $(abspath $(dep)) rel/pushysim/lib;)
-	@rm -rf rel/pushysim/lib/pushysim*;ln -sf $(abspath apps/pushysim) rel/pushysim/lib/pushysim
+	@$(foreach lib,$(wildcard apps/* deps/*), /bin/echo -n .;rm -rf rel/pushysim/lib/$(shell basename $(lib))-* \
+	   && ln -sf $(abspath $(lib)) rel/pushysim/lib;)
 	@/bin/echo done.
 	@/bin/echo  Run \'make update\' to pick up changes in a running VM.
 
