@@ -57,6 +57,8 @@
          incarnation_id :: binary(),
          node_id :: binary()}).
 
+-define(ZMQ_CLOSE_TIMEOUT, 10).
+
 %% ------------------------------------------------------------------
 %% API Function Definitions
 %% ------------------------------------------------------------------
@@ -76,6 +78,8 @@ init([#client_state{ctx = Ctx,
                     client_name = ClientName,
                     server_name = Hostname,
                     server_port = Port}, InstanceId]) ->
+    process_flag(trap_exit, true),
+
     IncarnationId = list_to_binary(pushy_util:guid_v4()),
 
     lager:debug("Getting config from Pushy Server ~s:~w", [Hostname, Port]),
@@ -105,34 +109,36 @@ init([#client_state{ctx = Ctx,
                    incarnation_id = IncarnationId
                   },
     start_spread_heartbeat(Interval),
-
     {ok, State}.
 
-handle_call(stop, _From, #state{command_sock = CommandSock,
-                               heartbeat_sock = HeartbeatSock} = State) ->
-    erlzmq:close(CommandSock),
-    erlzmq:close(HeartbeatSock),
-    {stop, normal, ok, State};
-handle_call(_Request, _From, State) ->
-    {noreply, ok, State}.
+handle_call(Request, _From, #state{node_id = NodeId} = State) ->
+    lager:warning("handle_call: [~s] unhandled message ~w:", [NodeId, Request]),
+    {reply, ignored, State}.
 
 handle_cast(heartbeat, State) ->
     State1 = send_heartbeat(State),
     {noreply, State1};
-handle_cast(_Msg, State) ->
+handle_cast(Msg, #state{node_id = NodeId} = State) ->
+    lager:warning("handle_cast: [~s] unhandled message ~w:", [NodeId, Msg]),
     {noreply, State}.
 
 handle_info(start_heartbeat, #state{heartbeat_interval = Interval,
                                     node_id = NodeId} = State) ->
-    lager:info("Starting heartbeat for ~s (interval ~ws)", [NodeId, Interval]),
+    lager:info("Starting heartbeat: [~s] (interval ~ws)", [NodeId, Interval]),
     timer:apply_interval(Interval, ?MODULE, heartbeat, [self()]),
     {noreply, State};
 handle_info({zmq, Sock, Frame, [rcvmore]}, State) ->
     {noreply, receive_message(Sock, Frame, State)};
-handle_info(_Info, State) ->
+handle_info(Info, #state{node_id = NodeId} = State) ->
+    lager:warning("handle_info: [~s] unhandled message ~w:", [NodeId, Info]),
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, #state{command_sock = CommandSock,
+                          heartbeat_sock = HeartbeatSock,
+                          node_id = NodeId}) ->
+    lager:info("Stoppping: [~s]", [NodeId]),
+    erlzmq:close(CommandSock, ?ZMQ_CLOSE_TIMEOUT),
+    erlzmq:close(HeartbeatSock, ?ZMQ_CLOSE_TIMEOUT),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -270,6 +276,7 @@ connect_to_command(Ctx, Address) ->
 connect_to_heartbeat(Ctx, Address) ->
     lager:debug("Client : Connecting to server heartbeat channel at ~s.", [Address]),
     {ok, Sock} = erlzmq:socket(Ctx, [sub, {active, true}]),
+    erlzmq:setsockopt(Sock, linger, 0),
     erlzmq:connect(Sock, Address),
     erlzmq:setsockopt(Sock, subscribe, ""),
     {ok, Sock}.
@@ -282,5 +289,4 @@ start_spread_heartbeat(Interval) ->
     <<A1:32, A2:32, A3:32>> = crypto:rand_bytes(12),
     random:seed(A1, A2, A3),
     Delay = random:uniform(Interval),
-    lager:info("Will send message after ~wms", [Delay]),
     {ok, _Timer} = timer:send_after(Delay, start_heartbeat).
