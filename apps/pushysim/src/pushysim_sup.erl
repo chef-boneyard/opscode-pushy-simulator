@@ -37,14 +37,16 @@ start_link(Ctx) ->
 init([#client_state{} = ClientState0]) ->
     Hostname = list_to_binary(pushy_util:get_env(pushysim, server_name, fun is_list/1)),
     Port = pushy_util:get_env(pushysim, server_api_port, fun is_integer/1),
+    EnableGraphite = pushy_util:get_env(pushy_common, enable_graphite, fun is_boolean/1),
 
     ClientState = ClientState0#client_state{server_name = Hostname,
                                             server_port = Port,
                                             client_name = client_name()},
+    Workers = [?WORKER(chef_keyring, []),
+               ?SUP(pushysim_client_sup, [ClientState])
+              ],
     {ok, {{one_for_one, 10, 3600},
-               [?WORKER(chef_keyring, []),
-                ?SUP(pushysim_client_sup, [ClientState])
-               ]}}.
+         maybe_run_graphite(EnableGraphite, Workers)}}.
 
 %% ------------------------------------------------------------------
 %% Internal Function Definitions
@@ -54,4 +56,9 @@ init([#client_state{} = ClientState0]) ->
 client_name() ->
     {ok, Hostname} = inet:gethostname(),
     list_to_binary(Hostname).
+
+maybe_run_graphite(true, Workers) ->
+    [?SUP(folsom_graphite_sup, []) | Workers];
+maybe_run_graphite(false, Workers) ->
+    Workers.
 

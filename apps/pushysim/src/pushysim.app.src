@@ -9,7 +9,7 @@
   {applications, [
                   kernel,
                   stdlib,
-                  folsom_graphite,
+                  folsom,
                   erlzmq,
                   jiffy,
                   ibrowse,
