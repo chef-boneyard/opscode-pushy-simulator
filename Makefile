@@ -33,7 +33,7 @@ plt:
 	dialyzer --output_plt dialyzer_plt --plt dialyzer_plt --add_to_plt deps/*/ebin
 
 dialyze:
-	dialyzer  --src -Wunmatched_returns -Werror_handling -Wrace_conditions -r apps/pushysim/src -I deps
+	dialyzer  --src -Werror_handling -Wrace_conditions -r apps/pushysim/src -I deps
 
 #dialyzer:
 #	@rm -rf apps/pushy/.eunit
