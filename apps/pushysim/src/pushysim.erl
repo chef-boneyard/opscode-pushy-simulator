@@ -13,6 +13,8 @@
          count_clients/0
         ]).
 
+-define(PUSHY_ORGNAME, <<"clownco">>).
+
 %% ===================================================================
 %% API functions
 %% ===================================================================
@@ -20,7 +22,7 @@
 %% @doc start a client with a given InstanceId which identifies
 %% it on this simulator instance
 start_client(InstanceId) when is_integer(InstanceId) ->
-    supervisor:start_child(pushysim_client_sup, [InstanceId]).
+    supervisor:start_child(pushysim_client_sup, [?PUSHY_ORGNAME, InstanceId]).
 
 %% @doc Start a set of clients.  They are create in series.
 start_clients(Num) when is_integer(Num) ->

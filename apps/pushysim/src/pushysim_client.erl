@@ -17,7 +17,7 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/2,
+-export([start_link/3,
          heartbeat/1
         ]).
 
@@ -63,8 +63,8 @@
 %% API Function Definitions
 %% ------------------------------------------------------------------
 
-start_link(ClientState, InstanceId) ->
-    gen_server:start_link(?MODULE, [ClientState, InstanceId], []).
+start_link(ClientState, OrgName, InstanceId) ->
+    gen_server:start_link(?MODULE, [ClientState, OrgName, InstanceId], []).
 
 heartbeat(Pid) ->
     gen_server:cast(Pid, heartbeat).
@@ -73,11 +73,10 @@ heartbeat(Pid) ->
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
--spec init([#client_state{}]) -> {ok, #state{} }.
 init([#client_state{ctx = Ctx,
                     client_name = ClientName,
                     server_name = Hostname,
-                    server_port = Port}, InstanceId]) ->
+                    server_port = Port}, OrgName, InstanceId]) ->
     process_flag(trap_exit, true),
 
     IncarnationId = list_to_binary(pushy_util:guid_v4()),
@@ -87,7 +86,7 @@ init([#client_state{ctx = Ctx,
                          heartbeat_address = HeartbeatAddress,
                          heartbeat_interval = Interval,
                          server_public_key = PublicKey } = ?TIME_IT(pushy_client_config, get_config,
-                                                                    (?PUSHY_ORGNAME, Hostname, Port)),
+                                                                    (OrgName, Hostname, Port)),
 
     NodeId = list_to_binary(io_lib:format("~s-~4..0B", [ClientName, InstanceId])),
     lager:info("Starting pushy client with node id ~s (~s).", [NodeId, IncarnationId]),
