@@ -11,6 +11,7 @@
 -include("pushysim.hrl").
 -include_lib("pushy_common/include/pushy_client.hrl").
 -include_lib("pushy_common/include/pushy_metrics.hrl").
+-include_lib("public_key/include/public_key.hrl").
 
 
 %% ------------------------------------------------------------------
@@ -52,8 +53,8 @@
          client_name :: binary(),
          heartbeat_interval :: integer(),
          sequence :: integer(),
-         server_public_key,
-         private_key :: any(),
+         server_public_key :: rsa_public_key(),
+         private_key :: rsa_private_key(),
          incarnation_id :: binary(),
          node_id :: binary()}).
 
@@ -80,22 +81,25 @@ init([#client_state{ctx = Ctx,
     process_flag(trap_exit, true),
 
     IncarnationId = list_to_binary(pushy_util:guid_v4()),
+    NodeName = list_to_binary(io_lib:format("~s-~4..0B", [ClientName, InstanceId])),
+    lager:info("Creating pushy client with node id ~s (~s).", [NodeName, IncarnationId]),
+
+    %% TODO This doesn't work - let's just fly for a bit with the CreatorKey
+    %%{ok, PrivateKey} = pushysim_services:create_client(OrgName, NodeName),
+    {ok, CreatorKey} = chef_keyring:get_key(creator),
+    {ok, CreatorName} = application:get_env(pushysim, creator_name),
 
     lager:debug("Getting config from Pushy Server ~s:~w", [Hostname, Port]),
     #pushy_client_config{command_address = CommandAddress,
                          heartbeat_address = HeartbeatAddress,
                          heartbeat_interval = Interval,
                          server_public_key = PublicKey } = ?TIME_IT(pushy_client_config, get_config,
-                                                                    (OrgName, Hostname, Port)),
-
-    NodeId = list_to_binary(io_lib:format("~s-~4..0B", [ClientName, InstanceId])),
-    lager:info("Starting pushy client with node id ~s (~s).", [NodeId, IncarnationId]),
-
+                                                                    (OrgName, NodeName,
+                                                                     list_to_binary(CreatorName),
+                                                                     CreatorKey, Hostname, Port)),
 
     {ok, HeartbeatSock} = ?TIME_IT(?MODULE, connect_to_heartbeat, (Ctx, HeartbeatAddress)),
     {ok, CommandSock} = ?TIME_IT(?MODULE, connect_to_command, (Ctx, CommandAddress)),
-
-    {ok, PrivateKey} = chef_keyring:get_key(client_private),
 
     State = #state{command_sock = CommandSock,
                    heartbeat_sock = HeartbeatSock,
@@ -103,8 +107,8 @@ init([#client_state{ctx = Ctx,
                    heartbeat_interval = Interval,
                    sequence = 0,
                    server_public_key = PublicKey,
-                   private_key = PrivateKey,
-                   node_id = NodeId,
+                   private_key = CreatorKey,
+                   node_id = NodeName,
                    incarnation_id = IncarnationId
                   },
     start_spread_heartbeat(Interval),
@@ -171,7 +175,7 @@ send_heartbeat(#state{command_sock = Sock,
     BodyFrame = jiffy:encode(Msg),
 
     % Send Header (including signed checksum)
-    HeaderFrame = pushy_util:signed_header_from_message(PrivateKey, BodyFrame),
+    HeaderFrame = pushy_messaging:make_header(proto_v2, rsa2048_sha1, PrivateKey, BodyFrame),
     pushy_messaging:send_message(Sock, [HeaderFrame, BodyFrame]),
     lager:debug("Heartbeat sent: header=~s,body=~s",[HeaderFrame, BodyFrame]),
     State#state{sequence=Sequence + 1}.
@@ -289,3 +293,4 @@ start_spread_heartbeat(Interval) ->
     random:seed(A1, A2, A3),
     Delay = random:uniform(Interval),
     {ok, _Timer} = timer:send_after(Delay, start_heartbeat).
+

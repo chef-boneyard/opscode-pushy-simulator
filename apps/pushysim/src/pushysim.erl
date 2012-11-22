@@ -1,4 +1,3 @@
-%% -*- erlang-indent-level: 4;indent-tabs-mode: nil; fill-column: 92 -*-
 %% ex: ts=4 sw=4 et
 %% @author James Casey <james@opscode.com>
 %% @copyright 2011-2012 Opscode Inc.
@@ -13,8 +12,6 @@
          count_clients/0
         ]).
 
--define(PUSHY_ORGNAME, <<"clownco">>).
-
 %% ===================================================================
 %% API functions
 %% ===================================================================
@@ -22,7 +19,7 @@
 %% @doc start a client with a given InstanceId which identifies
 %% it on this simulator instance
 start_client(InstanceId) when is_integer(InstanceId) ->
-    supervisor:start_child(pushysim_client_sup, [?PUSHY_ORGNAME, InstanceId]).
+    supervisor:start_child(pushysim_client_sup, [org_name(), InstanceId]).
 
 %% @doc Start a set of clients.  They are create in series.
 start_clients(Num) when is_integer(Num) ->
@@ -46,3 +43,5 @@ count_clients() ->
 %% INTERNAL FUNCTIONS
 %%
 
+org_name() ->
+    list_to_binary(pushy_util:get_env(pushysim, org_name, fun is_list/1)).
