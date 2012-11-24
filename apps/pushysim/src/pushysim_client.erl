@@ -10,6 +10,7 @@
 -include_lib("erlzmq/include/erlzmq.hrl").
 -include("pushysim.hrl").
 -include_lib("pushy_common/include/pushy_client.hrl").
+-include_lib("pushy_common/include/pushy_messaging.hrl").
 -include_lib("pushy_common/include/pushy_metrics.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
@@ -51,10 +52,12 @@
         {command_sock :: any(),
          heartbeat_sock :: any(),
          client_name :: binary(),
+         org_name :: binary(),
          heartbeat_interval :: integer(),
          sequence :: integer(),
          server_public_key :: rsa_public_key(),
-         private_key :: rsa_private_key(),
+         session_key :: binary(),
+         session_method :: pushy_signing_method(),
          incarnation_id :: binary(),
          node_id :: binary()}).
 
@@ -93,6 +96,8 @@ init([#client_state{ctx = Ctx,
     #pushy_client_config{command_address = CommandAddress,
                          heartbeat_address = HeartbeatAddress,
                          heartbeat_interval = Interval,
+                         session_method = SessionMethod,
+                         session_key = SessionKey,
                          server_public_key = PublicKey } = ?TIME_IT(pushy_client_config, get_config,
                                                                     (OrgName, NodeName,
                                                                      list_to_binary(CreatorName),
@@ -104,10 +109,12 @@ init([#client_state{ctx = Ctx,
     State = #state{command_sock = CommandSock,
                    heartbeat_sock = HeartbeatSock,
                    client_name = ClientName,
+                   org_name = OrgName,
                    heartbeat_interval = Interval,
                    sequence = 0,
                    server_public_key = PublicKey,
-                   private_key = CreatorKey,
+                   session_key = SessionKey,
+                   session_method = SessionMethod,
                    node_id = NodeName,
                    incarnation_id = IncarnationId
                   },
@@ -155,27 +162,28 @@ code_change(_OldVsn, State, _Extra) ->
 -spec send_heartbeat(#state{}) -> #state{}.
 send_heartbeat(#state{command_sock = Sock,
                       client_name = ClientName,
+                      org_name = OrgName,
                       sequence = Sequence,
-                      private_key = PrivateKey,
+                      session_key = SessionKey,
+                      session_method = SessionMethod,
                       incarnation_id = IncarnationId,
                       node_id = NodeId} = State) ->
     lager:debug("Sending heartbeat ~w for ~s", [Sequence, NodeId]),
-
     Msg = {[{node, NodeId},
             {client, ClientName},
-            {org, "pushy"},
+            {org, OrgName},
             {type, heartbeat},
             {timestamp, list_to_binary(httpd_util:rfc1123_date())},
             {sequence, Sequence},
             {incarnation_id, IncarnationId},
-            {job_state, "idle"},
-            {job_id, "null"}
+            {job_state, <<"idle">>},
+            {job_id, <<"null">>}
            ]},
     % JSON encode message
     BodyFrame = jiffy:encode(Msg),
 
     % Send Header (including signed checksum)
-    HeaderFrame = pushy_messaging:make_header(proto_v2, rsa2048_sha1, PrivateKey, BodyFrame),
+    HeaderFrame = pushy_messaging:make_header(proto_v2, SessionMethod, SessionKey, BodyFrame),
     pushy_messaging:send_message(Sock, [HeaderFrame, BodyFrame]),
     lager:debug("Heartbeat sent: header=~s,body=~s",[HeaderFrame, BodyFrame]),
     State#state{sequence=Sequence + 1}.
@@ -185,13 +193,15 @@ send_heartbeat(#state{command_sock = Sock,
                     State :: #state{}) -> #state{}.
 send_response(Type, JobId, #state{command_sock = Sock,
                                   client_name = ClientName,
-                                  private_key = PrivateKey,
+                                  org_name = OrgName,
+                                  session_key = SessionKey,
+                                  session_method = SessionMethod,
                                   incarnation_id = IncarnationId,
                                   node_id = NodeId} = State) ->
     lager:debug("Sending response for ~s : ~s", [NodeId, Type]),
     Msg = {[{node, NodeId},
             {client, ClientName},
-            {org, "pushy"},
+            {org, OrgName},
             {type, Type},
             {timestamp, list_to_binary(httpd_util:rfc1123_date())},
             {incarnation_id, IncarnationId},
@@ -201,7 +211,7 @@ send_response(Type, JobId, #state{command_sock = Sock,
     BodyFrame = jiffy:encode(Msg),
 
     % Send Header (including signed checksum)
-    HeaderFrame = pushy_util:signed_header_from_message(PrivateKey, BodyFrame),
+    HeaderFrame = pushy_messaging:make_header(proto_v2, SessionMethod, SessionKey, BodyFrame),
     lager:debug("Sending Response: header=~s,body=~s",[HeaderFrame, BodyFrame]),
     pushy_messaging:send_message(Sock, [HeaderFrame, BodyFrame]),
     State.
@@ -210,47 +220,47 @@ send_response(Type, JobId, #state{command_sock = Sock,
                       Frame :: binary(),
                       State :: #state{}) -> #state{} | {error, bad_body | bad_header}.
 receive_message(Sock, Frame, #state{command_sock = CommandSock,
-                               heartbeat_sock = HeartbeatSock,
-                               server_public_key = PublicKey} = State) ->
+                                    heartbeat_sock = HeartbeatSock,
+                                    server_public_key = PublicKey,
+                                    session_key = SessionKey} = State) ->
     [Header, Body] = pushy_messaging:receive_message_async(Sock, Frame),
 
     lager:debug("Received message~n\tH ~s~n\tB ~s", [Header, Body]),
-    case catch pushy_util:do_authenticate_message(Header, Body, PublicKey) of
-        ok ->
+    KeyFun = fun(M, _EJson) ->
+            case M of
+                hmac_sha256 ->
+                    {ok, SessionKey};
+                rsa2048_sha1 ->
+                    {ok, PublicKey}
+            end
+    end,
+    case catch pushy_messaging:parse_message(Header, Body, KeyFun) of
+        {ok, #pushy_message{validated = ok,
+                            body = ParsedBody}} ->
             case Sock of
                 CommandSock ->
-                    process_server_command(Body, State);
+                    process_server_command(ParsedBody, State);
                 HeartbeatSock ->
-                    process_server_heartbeat(Body, State)
+                    process_server_heartbeat(ParsedBody, State)
             end;
-        {no_authn, bad_sig} ->
-            lager:error("Command message failed verification: header=~s", [Header]),
-            {error, bad_header}
+        {error, Message}  ->
+            lager:error("Command message failed verification: ~s", [Message]),
+            {error, Message}
     end.
 
--spec process_server_command(binary(), #state{}) -> #state{} | {error, bad_body}.
-process_server_command(Body, State) ->
-    case catch jiffy:decode(Body) of
-        {Data} ->
-            Type = ej:get({<<"type">>}, Data),
-            JobId = ej:get({<<"job_id">>}, Data),
-            respond(Type, JobId, State);
-        {'EXIT', Error} ->
-            lager:error("Status message JSON parsing failed: body=~s, error=~s", [Body, Error]),
-            {error, bad_body}
-    end.
+-spec process_server_command(ParsedBody :: json_term(),
+                             State :: #state{}) -> #state{}.
+process_server_command(ParsedBody, State) ->
+    Type = ej:get({<<"type">>}, ParsedBody),
+    JobId = ej:get({<<"job_id">>}, ParsedBody),
+    respond(Type, JobId, State).
 
--spec process_server_heartbeat(binary(), #state{}) -> #state{} | {error, bad_body}.
-process_server_heartbeat(Body, State) ->
-    case catch jiffy:decode(Body) of
-        {Data} ->
-            %% TODO - we should do something with these heartbeats...
-            ej:get({<<"server">>}, Data),
-            State;
-        {'EXIT', Error} ->
-            lager:error("Server heartbeat JSON parsing failed: body=~s, error=~s", [Body, Error]),
-            {error, bad_body}
-    end.
+-spec process_server_heartbeat(ParsedBody :: json_term(),
+                               State :: #state{}) -> #state{}.
+process_server_heartbeat(ParsedBody, State) ->
+    %% TODO - we should do something with these heartbeats...
+    ej:get({<<"server">>}, ParsedBody),
+    State.
 
 -spec respond(Type :: binary(),
               JobId :: binary(),
