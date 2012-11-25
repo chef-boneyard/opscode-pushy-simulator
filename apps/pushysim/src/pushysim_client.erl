@@ -58,7 +58,7 @@
          session_key :: binary(),
          session_method :: pushy_signing_method(),
          incarnation_id :: binary(),
-         node_id :: binary()}).
+         node_name :: binary()}).
 
 -define(ZMQ_CLOSE_TIMEOUT, 10).
 
@@ -113,38 +113,38 @@ init([#client_state{ctx = Ctx,
                    server_public_key = PublicKey,
                    session_key = SessionKey,
                    session_method = SessionMethod,
-                   node_id = NodeName,
+                   node_name = NodeName,
                    incarnation_id = IncarnationId
                   },
     start_spread_heartbeat(Interval),
     {ok, State}.
 
-handle_call(Request, _From, #state{node_id = NodeId} = State) ->
-    lager:warning("handle_call: [~s] unhandled message ~w:", [NodeId, Request]),
+handle_call(Request, _From, #state{node_name = NodeName} = State) ->
+    lager:warning("handle_call: [~s] unhandled message ~w:", [NodeName, Request]),
     {reply, ignored, State}.
 
 handle_cast(heartbeat, State) ->
     State1 = send_heartbeat(State),
     {noreply, State1};
-handle_cast(Msg, #state{node_id = NodeId} = State) ->
-    lager:warning("handle_cast: [~s] unhandled message ~w:", [NodeId, Msg]),
+handle_cast(Msg, #state{node_name = NodeName} = State) ->
+    lager:warning("handle_cast: [~s] unhandled message ~w:", [NodeName, Msg]),
     {noreply, State}.
 
 handle_info(start_heartbeat, #state{heartbeat_interval = Interval,
-                                    node_id = NodeId} = State) ->
-    lager:info("Starting heartbeat: [~s] (interval ~ws)", [NodeId, Interval]),
+                                    node_name = NodeName} = State) ->
+    lager:info("Starting heartbeat: [~s] (interval ~ws)", [NodeName, Interval]),
     timer:apply_interval(Interval, ?MODULE, heartbeat, [self()]),
     {noreply, State};
 handle_info({zmq, Sock, Frame, [rcvmore]}, State) ->
     {noreply, receive_message(Sock, Frame, State)};
-handle_info(Info, #state{node_id = NodeId} = State) ->
-    lager:warning("handle_info: [~s] unhandled message ~w:", [NodeId, Info]),
+handle_info(Info, #state{node_name = NodeName} = State) ->
+    lager:warning("handle_info: [~s] unhandled message ~w:", [NodeName, Info]),
     {noreply, State}.
 
 terminate(_Reason, #state{command_sock = CommandSock,
                           heartbeat_sock = HeartbeatSock,
-                          node_id = NodeId}) ->
-    lager:info("Stoppping: [~s]", [NodeId]),
+                          node_name = NodeName}) ->
+    lager:info("Stoppping: [~s]", [NodeName]),
     erlzmq:close(CommandSock, ?ZMQ_CLOSE_TIMEOUT),
     erlzmq:close(HeartbeatSock, ?ZMQ_CLOSE_TIMEOUT),
     ok.
@@ -164,9 +164,9 @@ send_heartbeat(#state{command_sock = Sock,
                       session_key = SessionKey,
                       session_method = SessionMethod,
                       incarnation_id = IncarnationId,
-                      node_id = NodeId} = State) ->
-    lager:debug("Sending heartbeat ~w for ~s", [Sequence, NodeId]),
-    Msg = {[{node, NodeId},
+                      node_name = NodeName} = State) ->
+    lager:debug("Sending heartbeat ~w for ~s", [Sequence, NodeName]),
+    Msg = {[{node, NodeName},
             {org, OrgName},
             {type, heartbeat},
             {timestamp, list_to_binary(httpd_util:rfc1123_date())},
@@ -192,9 +192,9 @@ send_response(Type, JobId, #state{command_sock = Sock,
                                   session_key = SessionKey,
                                   session_method = SessionMethod,
                                   incarnation_id = IncarnationId,
-                                  node_id = NodeId} = State) ->
-    lager:debug("Sending response for ~s : ~s", [NodeId, Type]),
-    Msg = {[{node, NodeId},
+                                  node_name = NodeName} = State) ->
+    lager:debug("Sending response for ~s : ~s", [NodeName, Type]),
+    Msg = {[{node, NodeName},
             {org, OrgName},
             {type, Type},
             {timestamp, list_to_binary(httpd_util:rfc1123_date())},
@@ -261,9 +261,9 @@ process_server_heartbeat(ParsedBody, State) ->
               State :: #state{}) -> #state{}.
 respond(<<"commit">>, JobId, State) ->
     send_response(<<"ack_commit">>, JobId, State);
-respond(<<"run">>, JobId, #state{node_id = NodeId} = State) ->
+respond(<<"run">>, JobId, #state{node_name = NodeName} = State) ->
     State1 = send_response(<<"ack_run">>, JobId, State),
-    lager:info("[~s] Wheee ! Running a job...", [NodeId]),
+    lager:info("[~s] Wheee ! Running a job...", [NodeName]),
     send_response(<<"succeeded">>, JobId, State1);
 respond(<<"abort">>, undefined, State) ->
     send_response(<<"aborted">>, null, State);
