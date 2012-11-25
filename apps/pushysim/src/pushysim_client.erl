@@ -10,14 +10,16 @@
 -include_lib("erlzmq/include/erlzmq.hrl").
 -include("pushysim.hrl").
 -include_lib("pushy_common/include/pushy_client.hrl").
+-include_lib("pushy_common/include/pushy_messaging.hrl").
 -include_lib("pushy_common/include/pushy_metrics.hrl").
+-include_lib("public_key/include/public_key.hrl").
 
 
 %% ------------------------------------------------------------------
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/2,
+-export([start_link/3,
          heartbeat/1
         ]).
 
@@ -49,13 +51,14 @@
 -record(state,
         {command_sock :: any(),
          heartbeat_sock :: any(),
-         client_name :: binary(),
+         org_name :: binary(),
          heartbeat_interval :: integer(),
          sequence :: integer(),
-         server_public_key,
-         private_key :: any(),
+         server_public_key :: rsa_public_key(),
+         session_key :: binary(),
+         session_method :: pushy_signing_method(),
          incarnation_id :: binary(),
-         node_id :: binary()}).
+         node_name :: binary()}).
 
 -define(ZMQ_CLOSE_TIMEOUT, 10).
 
@@ -63,8 +66,8 @@
 %% API Function Definitions
 %% ------------------------------------------------------------------
 
-start_link(ClientState, InstanceId) ->
-    gen_server:start_link(?MODULE, [ClientState, InstanceId], []).
+start_link(ClientState, OrgName, InstanceId) ->
+    gen_server:start_link(?MODULE, [ClientState, OrgName, InstanceId], []).
 
 heartbeat(Pid) ->
     gen_server:cast(Pid, heartbeat).
@@ -73,70 +76,75 @@ heartbeat(Pid) ->
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
--spec init([#client_state{}]) -> {ok, #state{} }.
 init([#client_state{ctx = Ctx,
                     client_name = ClientName,
                     server_name = Hostname,
-                    server_port = Port}, InstanceId]) ->
+                    server_port = Port}, OrgName, InstanceId]) ->
     process_flag(trap_exit, true),
 
     IncarnationId = list_to_binary(pushy_util:guid_v4()),
+    NodeName = list_to_binary(io_lib:format("~s-~4..0B", [ClientName, InstanceId])),
+    lager:info("Creating pushy client with node id ~s (~s).", [NodeName, IncarnationId]),
+
+    %% TODO This doesn't work - let's just fly for a bit with the CreatorKey
+    %%{ok, PrivateKey} = pushysim_services:create_client(OrgName, NodeName),
+    {ok, CreatorKey} = chef_keyring:get_key(creator),
+    {ok, CreatorName} = application:get_env(pushysim, creator_name),
 
     lager:debug("Getting config from Pushy Server ~s:~w", [Hostname, Port]),
     #pushy_client_config{command_address = CommandAddress,
                          heartbeat_address = HeartbeatAddress,
                          heartbeat_interval = Interval,
+                         session_method = SessionMethod,
+                         session_key = SessionKey,
                          server_public_key = PublicKey } = ?TIME_IT(pushy_client_config, get_config,
-                                                                    (?PUSHY_ORGNAME, Hostname, Port)),
-
-    NodeId = list_to_binary(io_lib:format("~s-~4..0B", [ClientName, InstanceId])),
-    lager:info("Starting pushy client with node id ~s (~s).", [NodeId, IncarnationId]),
-
+                                                                    (OrgName, NodeName,
+                                                                     list_to_binary(CreatorName),
+                                                                     CreatorKey, Hostname, Port)),
 
     {ok, HeartbeatSock} = ?TIME_IT(?MODULE, connect_to_heartbeat, (Ctx, HeartbeatAddress)),
     {ok, CommandSock} = ?TIME_IT(?MODULE, connect_to_command, (Ctx, CommandAddress)),
 
-    {ok, PrivateKey} = chef_keyring:get_key(client_private),
-
     State = #state{command_sock = CommandSock,
                    heartbeat_sock = HeartbeatSock,
-                   client_name = ClientName,
+                   org_name = OrgName,
                    heartbeat_interval = Interval,
                    sequence = 0,
                    server_public_key = PublicKey,
-                   private_key = PrivateKey,
-                   node_id = NodeId,
+                   session_key = SessionKey,
+                   session_method = SessionMethod,
+                   node_name = NodeName,
                    incarnation_id = IncarnationId
                   },
     start_spread_heartbeat(Interval),
     {ok, State}.
 
-handle_call(Request, _From, #state{node_id = NodeId} = State) ->
-    lager:warning("handle_call: [~s] unhandled message ~w:", [NodeId, Request]),
+handle_call(Request, _From, #state{node_name = NodeName} = State) ->
+    lager:warning("handle_call: [~s] unhandled message ~w:", [NodeName, Request]),
     {reply, ignored, State}.
 
 handle_cast(heartbeat, State) ->
     State1 = send_heartbeat(State),
     {noreply, State1};
-handle_cast(Msg, #state{node_id = NodeId} = State) ->
-    lager:warning("handle_cast: [~s] unhandled message ~w:", [NodeId, Msg]),
+handle_cast(Msg, #state{node_name = NodeName} = State) ->
+    lager:warning("handle_cast: [~s] unhandled message ~w:", [NodeName, Msg]),
     {noreply, State}.
 
 handle_info(start_heartbeat, #state{heartbeat_interval = Interval,
-                                    node_id = NodeId} = State) ->
-    lager:info("Starting heartbeat: [~s] (interval ~ws)", [NodeId, Interval]),
+                                    node_name = NodeName} = State) ->
+    lager:info("Starting heartbeat: [~s] (interval ~ws)", [NodeName, Interval]),
     timer:apply_interval(Interval, ?MODULE, heartbeat, [self()]),
     {noreply, State};
 handle_info({zmq, Sock, Frame, [rcvmore]}, State) ->
     {noreply, receive_message(Sock, Frame, State)};
-handle_info(Info, #state{node_id = NodeId} = State) ->
-    lager:warning("handle_info: [~s] unhandled message ~w:", [NodeId, Info]),
+handle_info(Info, #state{node_name = NodeName} = State) ->
+    lager:warning("handle_info: [~s] unhandled message ~w:", [NodeName, Info]),
     {noreply, State}.
 
 terminate(_Reason, #state{command_sock = CommandSock,
                           heartbeat_sock = HeartbeatSock,
-                          node_id = NodeId}) ->
-    lager:info("Stoppping: [~s]", [NodeId]),
+                          node_name = NodeName}) ->
+    lager:info("Stoppping: [~s]", [NodeName]),
     erlzmq:close(CommandSock, ?ZMQ_CLOSE_TIMEOUT),
     erlzmq:close(HeartbeatSock, ?ZMQ_CLOSE_TIMEOUT),
     ok.
@@ -151,28 +159,27 @@ code_change(_OldVsn, State, _Extra) ->
 
 -spec send_heartbeat(#state{}) -> #state{}.
 send_heartbeat(#state{command_sock = Sock,
-                      client_name = ClientName,
+                      org_name = OrgName,
                       sequence = Sequence,
-                      private_key = PrivateKey,
+                      session_key = SessionKey,
+                      session_method = SessionMethod,
                       incarnation_id = IncarnationId,
-                      node_id = NodeId} = State) ->
-    lager:debug("Sending heartbeat ~w for ~s", [Sequence, NodeId]),
-
-    Msg = {[{node, NodeId},
-            {client, ClientName},
-            {org, "pushy"},
+                      node_name = NodeName} = State) ->
+    lager:debug("Sending heartbeat ~w for ~s", [Sequence, NodeName]),
+    Msg = {[{node, NodeName},
+            {org, OrgName},
             {type, heartbeat},
             {timestamp, list_to_binary(httpd_util:rfc1123_date())},
             {sequence, Sequence},
             {incarnation_id, IncarnationId},
-            {job_state, "idle"},
-            {job_id, "null"}
+            {job_state, <<"idle">>},
+            {job_id, null}
            ]},
     % JSON encode message
     BodyFrame = jiffy:encode(Msg),
 
     % Send Header (including signed checksum)
-    HeaderFrame = pushy_util:signed_header_from_message(PrivateKey, BodyFrame),
+    HeaderFrame = pushy_messaging:make_header(proto_v2, SessionMethod, SessionKey, BodyFrame),
     pushy_messaging:send_message(Sock, [HeaderFrame, BodyFrame]),
     lager:debug("Heartbeat sent: header=~s,body=~s",[HeaderFrame, BodyFrame]),
     State#state{sequence=Sequence + 1}.
@@ -181,14 +188,14 @@ send_heartbeat(#state{command_sock = Sock,
                     JobId :: binary(),
                     State :: #state{}) -> #state{}.
 send_response(Type, JobId, #state{command_sock = Sock,
-                                  client_name = ClientName,
-                                  private_key = PrivateKey,
+                                  org_name = OrgName,
+                                  session_key = SessionKey,
+                                  session_method = SessionMethod,
                                   incarnation_id = IncarnationId,
-                                  node_id = NodeId} = State) ->
-    lager:debug("Sending response for ~s : ~s", [NodeId, Type]),
-    Msg = {[{node, NodeId},
-            {client, ClientName},
-            {org, "pushy"},
+                                  node_name = NodeName} = State) ->
+    lager:debug("Sending response for ~s : ~s", [NodeName, Type]),
+    Msg = {[{node, NodeName},
+            {org, OrgName},
             {type, Type},
             {timestamp, list_to_binary(httpd_util:rfc1123_date())},
             {incarnation_id, IncarnationId},
@@ -198,7 +205,7 @@ send_response(Type, JobId, #state{command_sock = Sock,
     BodyFrame = jiffy:encode(Msg),
 
     % Send Header (including signed checksum)
-    HeaderFrame = pushy_util:signed_header_from_message(PrivateKey, BodyFrame),
+    HeaderFrame = pushy_messaging:make_header(proto_v2, SessionMethod, SessionKey, BodyFrame),
     lager:debug("Sending Response: header=~s,body=~s",[HeaderFrame, BodyFrame]),
     pushy_messaging:send_message(Sock, [HeaderFrame, BodyFrame]),
     State.
@@ -207,57 +214,59 @@ send_response(Type, JobId, #state{command_sock = Sock,
                       Frame :: binary(),
                       State :: #state{}) -> #state{} | {error, bad_body | bad_header}.
 receive_message(Sock, Frame, #state{command_sock = CommandSock,
-                               heartbeat_sock = HeartbeatSock,
-                               server_public_key = PublicKey} = State) ->
+                                    heartbeat_sock = HeartbeatSock,
+                                    server_public_key = PublicKey,
+                                    session_key = SessionKey} = State) ->
     [Header, Body] = pushy_messaging:receive_message_async(Sock, Frame),
 
     lager:debug("Received message~n\tH ~s~n\tB ~s", [Header, Body]),
-    case catch pushy_util:do_authenticate_message(Header, Body, PublicKey) of
-        ok ->
+    KeyFun = fun(M, _EJson) ->
+            case M of
+                hmac_sha256 ->
+                    {ok, SessionKey};
+                rsa2048_sha1 ->
+                    {ok, PublicKey}
+            end
+    end,
+    case catch pushy_messaging:parse_message(Header, Body, KeyFun) of
+        {ok, #pushy_message{validated = ok,
+                            body = ParsedBody}} ->
             case Sock of
                 CommandSock ->
-                    process_server_command(Body, State);
+                    process_server_command(ParsedBody, State);
                 HeartbeatSock ->
-                    process_server_heartbeat(Body, State)
+                    process_server_heartbeat(ParsedBody, State)
             end;
-        {no_authn, bad_sig} ->
-            lager:error("Command message failed verification: header=~s", [Header]),
-            {error, bad_header}
+        {error, Message}  ->
+            lager:error("Command message failed verification: ~s", [Message]),
+            {error, Message}
     end.
 
--spec process_server_command(binary(), #state{}) -> #state{} | {error, bad_body}.
-process_server_command(Body, State) ->
-    case catch jiffy:decode(Body) of
-        {Data} ->
-            Type = ej:get({<<"type">>}, Data),
-            JobId = ej:get({<<"job_id">>}, Data),
-            respond(Type, JobId, State);
-        {'EXIT', Error} ->
-            lager:error("Status message JSON parsing failed: body=~s, error=~s", [Body, Error]),
-            {error, bad_body}
-    end.
+-spec process_server_command(ParsedBody :: json_term(),
+                             State :: #state{}) -> #state{}.
+process_server_command(ParsedBody, State) ->
+    Type = ej:get({<<"type">>}, ParsedBody),
+    JobId = ej:get({<<"job_id">>}, ParsedBody),
+    respond(Type, JobId, State).
 
--spec process_server_heartbeat(binary(), #state{}) -> #state{} | {error, bad_body}.
-process_server_heartbeat(Body, State) ->
-    case catch jiffy:decode(Body) of
-        {Data} ->
-            %% TODO - we should do something with these heartbeats...
-            ej:get({<<"server">>}, Data),
-            State;
-        {'EXIT', Error} ->
-            lager:error("Server heartbeat JSON parsing failed: body=~s, error=~s", [Body, Error]),
-            {error, bad_body}
-    end.
+-spec process_server_heartbeat(ParsedBody :: json_term(),
+                               State :: #state{}) -> #state{}.
+process_server_heartbeat(ParsedBody, State) ->
+    %% TODO - we should do something with these heartbeats...
+    ej:get({<<"server">>}, ParsedBody),
+    State.
 
 -spec respond(Type :: binary(),
               JobId :: binary(),
               State :: #state{}) -> #state{}.
 respond(<<"commit">>, JobId, State) ->
     send_response(<<"ack_commit">>, JobId, State);
-respond(<<"run">>, JobId, #state{node_id = NodeId} = State) ->
+respond(<<"run">>, JobId, #state{node_name = NodeName} = State) ->
     State1 = send_response(<<"ack_run">>, JobId, State),
-    lager:info("[~s] Wheee ! Running a job...", [NodeId]),
-    send_response(<<"complete">>, JobId, State1);
+    lager:info("[~s] Wheee ! Running a job...", [NodeName]),
+    send_response(<<"succeeded">>, JobId, State1);
+respond(<<"abort">>, undefined, State) ->
+    send_response(<<"aborted">>, null, State);
 respond(<<"abort">>, JobId, State) ->
     send_response(<<"aborted">>, JobId, State).
 
@@ -290,3 +299,4 @@ start_spread_heartbeat(Interval) ->
     random:seed(A1, A2, A3),
     Delay = random:uniform(Interval),
     {ok, _Timer} = timer:send_after(Delay, start_heartbeat).
+

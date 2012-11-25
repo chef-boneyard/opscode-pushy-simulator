@@ -13,6 +13,7 @@
                   erlzmq,
                   jiffy,
                   ibrowse,
+                  ssl,
                   lager
                  ]},
   {mod, { pushysim_app, []}},
