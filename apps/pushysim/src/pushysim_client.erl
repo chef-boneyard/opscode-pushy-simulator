@@ -51,7 +51,6 @@
 -record(state,
         {command_sock :: any(),
          heartbeat_sock :: any(),
-         client_name :: binary(),
          org_name :: binary(),
          heartbeat_interval :: integer(),
          sequence :: integer(),
@@ -108,7 +107,6 @@ init([#client_state{ctx = Ctx,
 
     State = #state{command_sock = CommandSock,
                    heartbeat_sock = HeartbeatSock,
-                   client_name = ClientName,
                    org_name = OrgName,
                    heartbeat_interval = Interval,
                    sequence = 0,
@@ -161,7 +159,6 @@ code_change(_OldVsn, State, _Extra) ->
 
 -spec send_heartbeat(#state{}) -> #state{}.
 send_heartbeat(#state{command_sock = Sock,
-                      client_name = ClientName,
                       org_name = OrgName,
                       sequence = Sequence,
                       session_key = SessionKey,
@@ -170,7 +167,6 @@ send_heartbeat(#state{command_sock = Sock,
                       node_id = NodeId} = State) ->
     lager:debug("Sending heartbeat ~w for ~s", [Sequence, NodeId]),
     Msg = {[{node, NodeId},
-            {client, ClientName},
             {org, OrgName},
             {type, heartbeat},
             {timestamp, list_to_binary(httpd_util:rfc1123_date())},
@@ -192,7 +188,6 @@ send_heartbeat(#state{command_sock = Sock,
                     JobId :: binary(),
                     State :: #state{}) -> #state{}.
 send_response(Type, JobId, #state{command_sock = Sock,
-                                  client_name = ClientName,
                                   org_name = OrgName,
                                   session_key = SessionKey,
                                   session_method = SessionMethod,
@@ -200,7 +195,6 @@ send_response(Type, JobId, #state{command_sock = Sock,
                                   node_id = NodeId} = State) ->
     lager:debug("Sending response for ~s : ~s", [NodeId, Type]),
     Msg = {[{node, NodeId},
-            {client, ClientName},
             {org, OrgName},
             {type, Type},
             {timestamp, list_to_binary(httpd_util:rfc1123_date())},
@@ -270,7 +264,7 @@ respond(<<"commit">>, JobId, State) ->
 respond(<<"run">>, JobId, #state{node_id = NodeId} = State) ->
     State1 = send_response(<<"ack_run">>, JobId, State),
     lager:info("[~s] Wheee ! Running a job...", [NodeId]),
-    send_response(<<"complete">>, JobId, State1);
+    send_response(<<"succeeded">>, JobId, State1);
 respond(<<"abort">>, undefined, State) ->
     send_response(<<"aborted">>, null, State);
 respond(<<"abort">>, JobId, State) ->
