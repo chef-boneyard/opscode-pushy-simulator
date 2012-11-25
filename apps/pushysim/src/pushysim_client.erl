@@ -177,7 +177,7 @@ send_heartbeat(#state{command_sock = Sock,
             {sequence, Sequence},
             {incarnation_id, IncarnationId},
             {job_state, <<"idle">>},
-            {job_id, <<"null">>}
+            {job_id, null}
            ]},
     % JSON encode message
     BodyFrame = jiffy:encode(Msg),
@@ -271,6 +271,8 @@ respond(<<"run">>, JobId, #state{node_id = NodeId} = State) ->
     State1 = send_response(<<"ack_run">>, JobId, State),
     lager:info("[~s] Wheee ! Running a job...", [NodeId]),
     send_response(<<"complete">>, JobId, State1);
+respond(<<"abort">>, undefined, State) ->
+    send_response(<<"aborted">>, null, State);
 respond(<<"abort">>, JobId, State) ->
     send_response(<<"aborted">>, JobId, State).
 
