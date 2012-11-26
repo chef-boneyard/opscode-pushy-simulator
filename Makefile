@@ -1,4 +1,4 @@
-DEPS = deps/erlzmq deps\lager
+DEPS = deps/erlzmq deps/lager deps/pushy_common
 
 all: compile all_tests
 

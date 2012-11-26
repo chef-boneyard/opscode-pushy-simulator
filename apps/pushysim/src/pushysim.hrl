@@ -3,8 +3,6 @@
 %% @author James Casey <james@opscode.com>
 %% @copyright 2012 Opscode Inc.
 
--define(PUSHY_ORGNAME, <<"clownco">>).
-
 -record(client_state, {
           %% Zeromq Context
           ctx :: any(),
