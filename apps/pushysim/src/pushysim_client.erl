@@ -14,6 +14,7 @@
 -include_lib("pushy_common/include/pushy_metrics.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
+-define(INTERVAL_METRIC, <<"heartbeat.interval">>).
 
 %% ------------------------------------------------------------------
 %% API Function Exports
@@ -53,6 +54,7 @@
          heartbeat_sock :: any(),
          org_name :: binary(),
          heartbeat_interval :: integer(),
+         heartbeat_timestamp :: integer(),
          sequence :: integer(),
          server_public_key :: rsa_public_key(),
          session_key :: binary(),
@@ -133,8 +135,9 @@ handle_cast(Msg, #state{node_name = NodeName} = State) ->
 handle_info(start_heartbeat, #state{heartbeat_interval = Interval,
                                     node_name = NodeName} = State) ->
     lager:info("Starting heartbeat: [~s] (interval ~ws)", [NodeName, Interval]),
+    folsom_metrics:new_histogram(?INTERVAL_METRIC),
     timer:apply_interval(Interval, ?MODULE, heartbeat, [self()]),
-    {noreply, State};
+    {noreply, State#state{heartbeat_timestamp = pushy_time:timestamp()}};
 handle_info({zmq, Sock, Frame, [rcvmore]}, State) ->
     {noreply, receive_message(Sock, Frame, State)};
 handle_info(Info, #state{node_name = NodeName} = State) ->
@@ -161,6 +164,7 @@ code_change(_OldVsn, State, _Extra) ->
 send_heartbeat(#state{command_sock = Sock,
                       org_name = OrgName,
                       sequence = Sequence,
+                      heartbeat_timestamp = LastTimestamp,
                       session_key = SessionKey,
                       session_method = SessionMethod,
                       incarnation_id = IncarnationId,
@@ -180,9 +184,12 @@ send_heartbeat(#state{command_sock = Sock,
 
     % Send Header (including signed checksum)
     HeaderFrame = pushy_messaging:make_header(proto_v2, SessionMethod, SessionKey, BodyFrame),
+    Now = pushy_time:timestamp(),
+    folsom_metrics:notify({?INTERVAL_METRIC, pushy_time:diff_in_secs(LastTimestamp, Now)}),
     pushy_messaging:send_message(Sock, [HeaderFrame, BodyFrame]),
-    lager:debug("Heartbeat sent: header=~s,body=~s",[HeaderFrame, BodyFrame]),
-    State#state{sequence=Sequence + 1}.
+    lager:debug("Heartbeat sent: ~s,sequence=~p",[NodeName, Sequence]),
+    State#state{sequence=Sequence + 1,
+                heartbeat_timestamp=Now}.
 
 -spec send_response(Type :: binary(),
                     JobId :: binary(),
