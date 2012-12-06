@@ -14,7 +14,7 @@
 -include_lib("pushy_common/include/pushy_metrics.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
--define(INTERVAL_METRIC, <<"heartbeat.interval">>).
+-define(INTERVAL_METRIC, pushy_metrics:app_metric(?MODULE,<<"heartbeat_interval">>)).
 
 %% ------------------------------------------------------------------
 %% API Function Exports
@@ -135,7 +135,6 @@ handle_cast(Msg, #state{node_name = NodeName} = State) ->
 handle_info(start_heartbeat, #state{heartbeat_interval = Interval,
                                     node_name = NodeName} = State) ->
     lager:info("Starting heartbeat: [~s] (interval ~ws)", [NodeName, Interval]),
-    folsom_metrics:new_histogram(?INTERVAL_METRIC),
     timer:apply_interval(Interval, ?MODULE, heartbeat, [self()]),
     {noreply, State#state{heartbeat_timestamp = pushy_time:timestamp()}};
 handle_info({zmq, Sock, Frame, [rcvmore]}, State) ->
@@ -185,7 +184,7 @@ send_heartbeat(#state{command_sock = Sock,
     % Send Header (including signed checksum)
     HeaderFrame = pushy_messaging:make_header(proto_v2, SessionMethod, SessionKey, BodyFrame),
     Now = pushy_time:timestamp(),
-    folsom_metrics:notify({?INTERVAL_METRIC, pushy_time:diff_in_secs(LastTimestamp, Now)}),
+    folsom_metrics:notify(?INTERVAL_METRIC, pushy_time:diff_in_secs(LastTimestamp, Now), histogram),
     pushy_messaging:send_message(Sock, [HeaderFrame, BodyFrame]),
     lager:debug("Heartbeat sent: ~s,sequence=~p",[NodeName, Sequence]),
     State#state{sequence=Sequence + 1,
