@@ -23,7 +23,10 @@ start_client(InstanceId) when is_integer(InstanceId) ->
 
 %% @doc Start a set of clients.  They are create in series.
 start_clients(Num) when is_integer(Num) ->
-    Clients = [ start_client(N) || N <- lists:seq(1, Num)],
+    Clients = [ begin
+                    start_client(N),
+                    timer:sleep(5)
+                end || N <- lists:seq(1, Num)],
     {ok, length(Clients)}.
 
 %% @doc Cleanly stop all running clients, shutting down zeromq sockets.
