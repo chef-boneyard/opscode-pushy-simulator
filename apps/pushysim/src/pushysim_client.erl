@@ -60,7 +60,8 @@
          session_key :: binary(),
          session_method :: pushy_signing_method(),
          incarnation_id :: binary(),
-         node_name :: binary()}).
+         node_name :: binary(),
+         fastpath :: boolean()}).
 
 -define(ZMQ_CLOSE_TIMEOUT, 10).
 
@@ -106,6 +107,7 @@ init([#client_state{ctx = Ctx,
 
     {ok, HeartbeatSock} = ?TIME_IT(?MODULE, connect_to_heartbeat, (Ctx, HeartbeatAddress)),
     {ok, CommandSock} = ?TIME_IT(?MODULE, connect_to_command, (Ctx, CommandAddress)),
+    {ok, FastPath} = application:get_env(pushysim, enable_fastpath),
 
     State = #state{command_sock = CommandSock,
                    heartbeat_sock = HeartbeatSock,
@@ -116,7 +118,8 @@ init([#client_state{ctx = Ctx,
                    session_key = SessionKey,
                    session_method = SessionMethod,
                    node_name = NodeName,
-                   incarnation_id = IncarnationId
+                   incarnation_id = IncarnationId,
+                   fastpath = FastPath
                   },
     start_spread_heartbeat(Interval),
     {ok, State}.
@@ -137,8 +140,13 @@ handle_info(start_heartbeat, #state{heartbeat_interval = Interval,
     lager:info("Starting heartbeat: [~s] (interval ~ws)", [NodeName, Interval]),
     timer:apply_interval(Interval, ?MODULE, heartbeat, [self()]),
     {noreply, State#state{heartbeat_timestamp = pushy_time:timestamp()}};
-handle_info({zmq, Sock, Frame, [rcvmore]}, State) ->
-    {noreply, receive_message(Sock, Frame, State)};
+handle_info({zmq, Sock, Frame, [rcvmore]}, #state{fastpath = FastPath} = State) ->
+    case FastPath of
+        true ->
+            {noreply, fastpath_receive_message(Sock, Frame, State)};
+        false ->
+            {noreply, receive_message(Sock, Frame, State)}
+    end;
 handle_info(Info, #state{node_name = NodeName} = State) ->
     lager:warning("handle_info: [~s] unhandled message ~w:", [NodeName, Info]),
     {noreply, State}.
@@ -215,6 +223,30 @@ send_response(Type, JobId, #state{command_sock = Sock,
     lager:debug("Sending Response: header=~s,body=~s",[HeaderFrame, BodyFrame]),
     pushy_messaging:send_message(Sock, [HeaderFrame, BodyFrame]),
     State.
+
+%% @doc bypass message verification to speed things along
+-spec fastpath_receive_message(Sock :: erlzmq_socket(),
+                               Frame :: binary(),
+                               State :: #state{}) -> #state{}.
+fastpath_receive_message(Sock, Frame, #state{command_sock = CommandSock,
+                                             heartbeat_sock = HeartbeatSock} = State) ->
+    [_Header, Body] = pushy_messaging:receive_message_async(Sock, Frame),
+    try ?TIME_IT(jiffy, decode, (Body)) of
+        {error, Error} ->
+            lager:error("JSON parsing of message failed with error: ~w", [Error]),
+            State;
+        ParsedBody ->
+            case Sock of
+                CommandSock ->
+                    process_server_command(ParsedBody, State);
+                HeartbeatSock ->
+                    process_server_heartbeat(ParsedBody, State)
+            end
+    catch
+        throw:Error ->
+            lager:error("JSON parsing failed with throw: ~w", [Error]),
+            State
+    end.
 
 -spec receive_message(Sock :: erlzmq_socket(),
                       Frame :: binary(),
