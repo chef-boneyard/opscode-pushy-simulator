@@ -9,7 +9,9 @@
 -export([start_client/1,
          start_clients/1,
          stop_clients/0,
-         count_clients/0
+         count_clients/0,
+         start_jobs/0,
+         start_jobs/1
         ]).
 
 %% ===================================================================
@@ -41,6 +43,15 @@ count_clients() ->
     ClientDesc = supervisor:count_children(pushysim_client_sup),
     proplists:get_value(workers, ClientDesc).
 
+start_jobs() ->
+    Cs = supervisor:which_children(pushysim_client_sup),
+    Ns = [gen_server:call(P, getname) || {_, P, _, _} <- Cs],
+    Names = [Name || {ok, Name} <- Ns],
+    start_jobs(Names).
+
+start_jobs(Names) ->
+    OrgName = org_name(),
+    pushysim_services:create_job(OrgName, Names).
 
 %%
 %% INTERNAL FUNCTIONS

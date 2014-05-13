@@ -124,6 +124,8 @@ init([#client_state{ctx = Ctx,
     start_spread_heartbeat(Interval),
     {ok, State}.
 
+handle_call(getname, _From, #state{node_name = NodeName} = State) ->
+    {reply, {ok, NodeName}, State};
 handle_call(Request, _From, #state{node_name = NodeName} = State) ->
     lager:warning("handle_call: [~s] unhandled message ~w:", [NodeName, Request]),
     {reply, ignored, State}.
@@ -304,7 +306,7 @@ respond(<<"run">>, JobId, #state{node_name = NodeName} = State) ->
     lager:info("[~s] Wheee ! Running a job...", [NodeName]),
     send_response(<<"succeeded">>, JobId, State1);
 respond(<<"abort">>, undefined, State) ->
-    send_response(<<"aborted">>, null, State);
+    send_response(<<"aborted">>, <<"">>, State);
 respond(<<"abort">>, JobId, State) ->
     send_response(<<"aborted">>, JobId, State).
 
