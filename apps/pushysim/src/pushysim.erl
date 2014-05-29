@@ -8,6 +8,7 @@
 %% API
 -export([start_client/1,
          start_clients/1,
+         start_clients/2,
          stop_clients/0,
          count_clients/0,
          start_jobs/0,
@@ -23,12 +24,16 @@
 start_client(InstanceId) when is_integer(InstanceId) ->
     supervisor:start_child(pushysim_client_sup, [org_name(), InstanceId]).
 
-%% @doc Start a set of clients.  They are create in series.
+%% @doc Start a set of clients.  They are created in series.
 start_clients(Num) when is_integer(Num) ->
+    start_clients(1, Num).
+
+%% @doc Start a set of clients.  They are created in a range.
+start_clients(Num1,Num2) when is_integer(Num1), is_integer(Num2) ->
     Clients = [ begin
                     start_client(N),
                     timer:sleep(5)
-                end || N <- lists:seq(1, Num)],
+                end || N <- lists:seq(Num1, Num2)],
     {ok, length(Clients)}.
 
 %% @doc Cleanly stop all running clients, shutting down zeromq sockets.
