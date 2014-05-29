@@ -45,7 +45,8 @@
          send_heartbeat/1,
          send_response/3,
          receive_message/3,
-         respond/3
+         respond/3,
+         receive_zmq_pid/3
         ]).
 
 %% TODO: tighten typedefs up
@@ -315,11 +316,26 @@ respond(<<"abort">>, JobId, State) ->
                          Address :: list()) -> {ok, erlzmq_socket()}.
 connect_to_command(Ctx, Address) ->
     lager:debug("Client : Connecting to command channel at ~s.", [Address]),
-    {ok, Sock} = erlzmq:socket(Ctx, [dealer, {active, true}]),
+    {ok, Sock} = erlzmq:socket(Ctx, [dealer, {active, false}]),
     erlzmq:setsockopt(Sock, linger, 0),
-    erlzmq:connect(Sock, Address),
+    spawn_link(?MODULE, receive_zmq_pid, [self(), Sock, Address]),
     {ok, Sock}.
 
+-spec receive_zmq_pid(Pid :: pid(), Sock :: erlzmq_socket(), Address :: list()) -> ok.
+receive_zmq_pid(P, Sock, Address) ->
+    erlzmq:connect(Sock, Address),
+    receive_zmq(P, Sock, Address).
+
+receive_zmq(P, Sock, Address) ->
+    {ok, Msg} = erlzmq:recv(Sock),
+    {ok, Rcvmore} = erlzmq:getsockopt(Sock, rcvmore),
+    Flags = case Rcvmore of
+                0 -> [];
+                1 -> [rcvmore]
+            end,
+    P ! {zmq, Sock, Msg, Flags},
+    receive_zmq(P, Sock, Address).
+    
 -spec connect_to_heartbeat(Ctx :: erlzmq_context(),
                            Address :: list()) -> {ok, erlzmq_socket()}.
 connect_to_heartbeat(Ctx, Address) ->
