@@ -22,8 +22,10 @@
 start(_StartType, _StartArgs) ->
     error_logger:info_msg("Pushy Client Simulator starting.~n"),
     IoProcesses = pushy_util:get_env(pushysim, zmq_io_processes, 1, fun is_integer/1),
-    case erlzmq:context(IoProcesses, [{max_sockets, 51200}]) of
+    case czmq:start_link() of
         {ok, Ctx} ->
+            czmq:zctx_set_iothreads(Ctx, IoProcesses),
+            czmq:zctx_set_maxsockets(Ctx, 51200),
             case pushysim_sup:start_link(#client_state{ctx=Ctx}) of
                 {ok, Pid} -> {ok, Pid, Ctx};
                 Error -> Error
@@ -33,4 +35,4 @@ start(_StartType, _StartArgs) ->
     end.
 
 stop(Ctx) ->
-    erlzmq:term(Ctx, 5000).
+    czmq:terminate(Ctx).

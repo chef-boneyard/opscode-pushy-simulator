@@ -10,7 +10,7 @@
                   kernel,
                   stdlib,
                   folsom,
-                  erlzmq,
+                  czmq,
                   jiffy,
                   ibrowse,
                   ssl,

@@ -7,12 +7,17 @@
 -define(SERVER, ?MODULE).
 
 -include_lib("eunit/include/eunit.hrl").
--include_lib("erlzmq/include/erlzmq.hrl").
+-include_lib("czmq/include/czmq.hrl").
 -include("pushysim.hrl").
 -include_lib("pushy_common/include/pushy_client.hrl").
 -include_lib("pushy_common/include/pushy_messaging.hrl").
 -include_lib("pushy_common/include/pushy_metrics.hrl").
 -include_lib("public_key/include/public_key.hrl").
+
+%% The 0.1.0 version of erlang-czmq doesn't include type specs,
+%% so we'll put these in as a temporary measure.
+-type czmq_context() :: any().
+-type czmq_socket() :: any().
 
 -define(INTERVAL_METRIC, pushy_metrics:app_metric(?MODULE,<<"heartbeat_interval">>)).
 
@@ -158,8 +163,8 @@ terminate(_Reason, #state{command_sock = CommandSock,
                           heartbeat_sock = HeartbeatSock,
                           node_name = NodeName}) ->
     lager:info("Stoppping: [~s]", [NodeName]),
-    erlzmq:close(CommandSock, ?ZMQ_CLOSE_TIMEOUT),
-    erlzmq:close(HeartbeatSock, ?ZMQ_CLOSE_TIMEOUT),
+    czmq:zsocket_destroy(CommandSock),
+    czmq:zsocket_destroy(HeartbeatSock),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -228,7 +233,7 @@ send_response(Type, JobId, #state{command_sock = Sock,
     State.
 
 %% @doc bypass message verification to speed things along
--spec fastpath_receive_message(Sock :: erlzmq_socket(),
+-spec fastpath_receive_message(Sock :: czmq_socket(),
                                Frame :: binary(),
                                State :: #state{}) -> #state{}.
 fastpath_receive_message(Sock, Frame, #state{command_sock = CommandSock,
@@ -251,7 +256,7 @@ fastpath_receive_message(Sock, Frame, #state{command_sock = CommandSock,
             State
     end.
 
--spec receive_message(Sock :: erlzmq_socket(),
+-spec receive_message(Sock :: czmq_socket(),
                       Frame :: binary(),
                       State :: #state{}) -> #state{} | {error, bad_body | bad_header}.
 receive_message(Sock, Frame, #state{command_sock = CommandSock,
@@ -312,38 +317,43 @@ respond(<<"abort">>, JobId, State) ->
     send_response(<<"aborted">>, JobId, State).
 
 
--spec connect_to_command(Ctx :: erlzmq_context(),
-                         Address :: list()) -> {ok, erlzmq_socket()}.
+-spec connect_to_command(Ctx :: czmq_context(),
+                         Address :: list()) -> {ok, czmq_socket()}.
 connect_to_command(Ctx, Address) ->
     lager:debug("Client : Connecting to command channel at ~s.", [Address]),
-    {ok, Sock} = erlzmq:socket(Ctx, [dealer, {active, false}]),
-    erlzmq:setsockopt(Sock, linger, 0),
+    Sock = czmq:zsocket_new(Ctx, dealer),
+    czmq:zsocket_set_linger(Sock, 0),
     spawn_link(?MODULE, receive_zmq_pid, [self(), Sock, Address]),
     {ok, Sock}.
 
--spec receive_zmq_pid(Pid :: pid(), Sock :: erlzmq_socket(), Address :: list()) -> ok.
+-spec receive_zmq_pid(Pid :: pid(), Sock :: czmq_socket(), Address :: list()) -> ok.
 receive_zmq_pid(P, Sock, Address) ->
-    erlzmq:connect(Sock, Address),
-    receive_zmq(P, Sock, Address).
+    ok = czmq:zsocket_connect(Sock, Address),
+    {ok, Poller} = czmq:subscribe_link(Sock),
+    receive_zmq(Poller, P, Sock).
 
-receive_zmq(P, Sock, Address) ->
-    {ok, Msg} = erlzmq:recv(Sock),
-    {ok, Rcvmore} = erlzmq:getsockopt(Sock, rcvmore),
-    Flags = case Rcvmore of
-                0 -> [];
-                1 -> [rcvmore]
-            end,
-    P ! {zmq, Sock, Msg, Flags},
-    receive_zmq(P, Sock, Address).
-    
--spec connect_to_heartbeat(Ctx :: erlzmq_context(),
-                           Address :: list()) -> {ok, erlzmq_socket()}.
+receive_zmq(Poller, P, Sock) ->
+    receive
+        {Poller, Frames} -> 
+            rcv_frames(P, Sock, Frames),
+            receive_zmq(Poller, P, Sock);
+        stop -> ok
+    end.
+
+rcv_frames(P, Sock, [F]) -> P ! {zmq, Sock, F, []};
+rcv_frames(P, Sock, [F|T]) ->
+    P ! {zmq, Sock, F, [rcvmore]},
+    rcv_frames(P, Sock, T).
+
+-spec connect_to_heartbeat(Ctx :: czmq_context(),
+                           Address :: list()) -> {ok, czmq_socket()}.
 connect_to_heartbeat(Ctx, Address) ->
     lager:debug("Client : Connecting to server heartbeat channel at ~s.", [Address]),
-    {ok, Sock} = erlzmq:socket(Ctx, [sub, {active, true}]),
-    erlzmq:setsockopt(Sock, linger, 0),
-    erlzmq:connect(Sock, Address),
-    erlzmq:setsockopt(Sock, subscribe, ""),
+    Sock = czmq:zsocket_new(Ctx, sub),
+    czmq:zctx_set_linger(Ctx, 0),
+    czmq:zsocket_connect(Sock, Address),
+    czmq:zsocket_set_subscribe(Sock, ""),
+    spawn_link(?MODULE, receive_zmq_pid, [self(), Sock, Address]),
     {ok, Sock}.
 
 %
