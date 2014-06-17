@@ -41,7 +41,7 @@
 %% ------------------------------------------------------------------
 
 -export([connect_to_heartbeat/2,
-         connect_to_command/3,
+         connect_to_command/5,
          send_heartbeat/1,
          send_response/3,
          receive_message/3,
@@ -96,9 +96,10 @@ init([#client_state{ctx = Ctx,
     {ok, CreatorName} = application:get_env(pushysim, creator_name),
 
     lager:debug("Getting config from Pushy Server ~s:~w", [Hostname, Port]),
+    {ok, ClientCurvePubKey, ClientCurveSecKey} = erlzmq:curve_keypair(),
     Config = ?TIME_IT(pushy_client_config, get_config,
                         (OrgName, NodeName, list_to_binary(CreatorName),
-                         CreatorKey, Hostname, Port)),
+                         CreatorKey, Hostname, Port, ClientCurvePubKey)),
 
     #pushy_client_config{command_address = CommandAddress,
                          heartbeat_address = HeartbeatAddress,
@@ -109,7 +110,7 @@ init([#client_state{ctx = Ctx,
                          server_curve_key = ServerCurveKey} = Config,
 
     {ok, HeartbeatSock} = ?TIME_IT(?MODULE, connect_to_heartbeat, (Ctx, HeartbeatAddress)),
-    {ok, CommandSock} = ?TIME_IT(?MODULE, connect_to_command, (Ctx, CommandAddress, ServerCurveKey)),
+    {ok, CommandSock} = ?TIME_IT(?MODULE, connect_to_command, (Ctx, CommandAddress, ServerCurveKey, ClientCurvePubKey, ClientCurveSecKey)),
     {ok, FastPath} = application:get_env(pushysim, enable_fastpath),
 
     State = #state{command_sock = CommandSock,
@@ -316,15 +317,15 @@ respond(<<"abort">>, JobId, State) ->
 
 -spec connect_to_command(Ctx :: erlzmq_context(),
                          Address :: list(),
-                         ServerCurveKey :: binary()) -> {ok, erlzmq_socket()}.
-connect_to_command(Ctx, Address, ServerCurveKey) ->
+                         ServerCurveKey :: binary(),
+                         ClientCurvePubKey :: binary(),
+                         ClientCurveSecKey :: binary()) -> {ok, erlzmq_socket()}.
+connect_to_command(Ctx, Address, ServerCurveKey, ClientCurvePubKey, ClientCurveSecKey) ->
     lager:debug("Client : Connecting to command channel at ~s.", [Address]),
     {ok, Sock} = erlzmq:socket(Ctx, [dealer, {active, false}]),
     ok = erlzmq:setsockopt(Sock, curve_serverkey, ServerCurveKey),
-    % XXX This can't be quite this temporary
-    {ok, Pub, Sec} = erlzmq:curve_keypair(),
-    ok = erlzmq:setsockopt(Sock, curve_publickey, Pub),
-    ok = erlzmq:setsockopt(Sock, curve_secretkey, Sec),
+    ok = erlzmq:setsockopt(Sock, curve_publickey, ClientCurvePubKey),
+    ok = erlzmq:setsockopt(Sock, curve_secretkey, ClientCurveSecKey),
     erlzmq:setsockopt(Sock, linger, 0),
     spawn_link(?MODULE, receive_zmq_pid, [self(), Sock, Address]),
     {ok, Sock}.
