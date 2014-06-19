@@ -312,7 +312,9 @@ respond(<<"run">>, JobId, #state{node_name = NodeName} = State) ->
 respond(<<"abort">>, undefined, State) ->
     send_response(<<"aborted">>, <<"">>, State);
 respond(<<"abort">>, JobId, State) ->
-    send_response(<<"aborted">>, JobId, State).
+    send_response(<<"aborted">>, JobId, State);
+respond(<<"ack">>, _, State) ->
+    State.
 
 
 -spec connect_to_command(Ctx :: erlzmq_context(),
