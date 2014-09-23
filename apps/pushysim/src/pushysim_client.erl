@@ -95,7 +95,6 @@ init([#client_state{ctx = Ctx,
     {ok, CreatorKey} = chef_keyring:get_key(creator),
     {ok, CreatorName} = application:get_env(pushysim, creator_name),
 
-    lager:debug("Getting config from Pushy Server ~s:~w", [Hostname, Port]),
     {ok, ClientCurvePubKey, ClientCurveSecKey} = erlzmq:curve_keypair(),
     Config = ?TIME_IT(pushy_client_config, get_config,
                         (OrgName, NodeName, list_to_binary(CreatorName),
@@ -182,7 +181,6 @@ send_heartbeat(#state{command_sock = Sock,
                       session_method = SessionMethod,
                       incarnation_id = IncarnationId,
                       node_name = NodeName} = State) ->
-    lager:debug("Sending heartbeat ~w for ~s", [Sequence, NodeName]),
     Msg = {[{node, NodeName},
             {org, OrgName},
             {type, heartbeat},
@@ -200,7 +198,6 @@ send_heartbeat(#state{command_sock = Sock,
     Now = pushy_time:timestamp(),
     folsom_metrics:notify(?INTERVAL_METRIC, pushy_time:diff_in_secs(LastTimestamp, Now), histogram),
     pushy_messaging:send_message(Sock, [HeaderFrame, BodyFrame]),
-    lager:debug("Heartbeat sent: ~s,sequence=~p",[NodeName, Sequence]),
     State#state{sequence=Sequence + 1,
                 heartbeat_timestamp=Now}.
 
@@ -213,7 +210,6 @@ send_response(Type, JobId, #state{command_sock = Sock,
                                   session_method = SessionMethod,
                                   incarnation_id = IncarnationId,
                                   node_name = NodeName} = State) ->
-    lager:debug("Sending response for ~s : ~s", [NodeName, Type]),
     Msg = {[{node, NodeName},
             {org, OrgName},
             {type, Type},
@@ -226,7 +222,6 @@ send_response(Type, JobId, #state{command_sock = Sock,
 
     % Send Header (including signed checksum)
     HeaderFrame = pushy_messaging:make_header(proto_v2, SessionMethod, SessionKey, BodyFrame),
-    lager:debug("Sending Response: header=~s,body=~s",[HeaderFrame, BodyFrame]),
     pushy_messaging:send_message(Sock, [HeaderFrame, BodyFrame]),
     State.
 
@@ -237,7 +232,7 @@ send_response(Type, JobId, #state{command_sock = Sock,
 fastpath_receive_message(Sock, Frame, #state{command_sock = CommandSock,
                                              heartbeat_sock = HeartbeatSock} = State) ->
     [_Header, Body] = pushy_messaging:receive_message_async(Sock, Frame),
-    try ?TIME_IT(jiffy, decode, (Body)) of
+    try jiffy:decode(Body) of
         {error, Error} ->
             lager:error("JSON parsing of message failed with error: ~w", [Error]),
             State;
@@ -263,7 +258,6 @@ receive_message(Sock, Frame, #state{command_sock = CommandSock,
                                     session_key = SessionKey} = State) ->
     [Header, Body] = pushy_messaging:receive_message_async(Sock, Frame),
 
-    lager:debug("Received message~n\tH ~s~n\tB ~s", [Header, Body]),
     KeyFun = fun(M, _EJson) ->
             case M of
                 hmac_sha256 ->
@@ -323,7 +317,6 @@ respond(<<"ack">>, _, State) ->
                          ClientCurvePubKey :: binary(),
                          ClientCurveSecKey :: binary()) -> {ok, erlzmq_socket()}.
 connect_to_command(Ctx, Address, ServerCurveKey, ClientCurvePubKey, ClientCurveSecKey) ->
-    lager:debug("Client : Connecting to command channel at ~s.", [Address]),
     {ok, Sock} = erlzmq:socket(Ctx, [dealer, {active, false}]),
     ok = erlzmq:setsockopt(Sock, curve_serverkey, ServerCurveKey),
     ok = erlzmq:setsockopt(Sock, curve_publickey, ClientCurvePubKey),
@@ -350,7 +343,6 @@ receive_zmq(P, Sock, Address) ->
 -spec connect_to_heartbeat(Ctx :: erlzmq_context(),
                            Address :: list()) -> {ok, erlzmq_socket()}.
 connect_to_heartbeat(Ctx, Address) ->
-    lager:debug("Client : Connecting to server heartbeat channel at ~s.", [Address]),
     {ok, Sock} = erlzmq:socket(Ctx, [sub, {active, true}]),
     erlzmq:setsockopt(Sock, linger, 0),
     erlzmq:connect(Sock, Address),
